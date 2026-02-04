@@ -20,8 +20,6 @@ show_pad = false;
 show_holder = true;
 show_holder_shell = true;
 show_holder_side_walls = true;
-show_holder_blend = true;
-show_holder_gussets = true;
 
 radius = 222.25;                            // mm
 radius_ref_mode = "hook_center";            // "hook_center" or "outer_edge"
@@ -57,6 +55,10 @@ shared_wall_overlap = 1.8;                  // radial merge strip into mount wal
 shared_wall_blend_radius = 3.0;             // local front-corner thickening
 interior_corner_radius = 4.0;               // floor-to-wall interior blend helper
 front_rim_round_radius = 3.0;               // round top inner edge of front/shared wall (basin side)
+// Optional feature toggles
+enable_shared_wall_blend = true;
+enable_interior_floor_blend = true;
+enable_front_rim_round = true;
 
 // Sweep envelope around holder
 match_sweep_to_holder = true;               // true = sweep angle matches holder arc
@@ -139,7 +141,7 @@ footprint_half_angle = min(
     89.5,
     max(
         0,
-        arc_angle_deg / 2 + ((enable_mount_gussets && show_holder_gussets) ? mount_gusset_span_deg : 0)
+        arc_angle_deg / 2 + (enable_mount_gussets ? mount_gusset_span_deg : 0)
     )
 );
 
@@ -170,11 +172,11 @@ if (shared_wall_overlap > max_recommended_overlap)
     echo("WARNING: shared_wall_overlap is larger than recommended.");
 if (interior_corner_radius < 2.0)
     echo("WARNING: interior_corner_radius < 2.0 mm reduces cleanability.");
-if (front_rim_round_radius > 0 && front_rim_round_radius < 1.5)
+if (enable_front_rim_round && front_rim_round_radius > 0 && front_rim_round_radius < 1.5)
     echo("WARNING: front_rim_round_radius < 1.5 mm may still feel sharp.");
-if (front_rim_round_radius > 0 && front_rim_round_radius > (front_wall_height - floor_thickness))
+if (enable_front_rim_round && front_rim_round_radius > 0 && front_rim_round_radius > (front_wall_height - floor_thickness))
     echo("WARNING: front_rim_round_radius exceeds front wall height; reduce radius.");
-if (front_rim_round_radius > 0 && front_rim_round_radius > cavity_inner_radius)
+if (enable_front_rim_round && front_rim_round_radius > 0 && front_rim_round_radius > cavity_inner_radius)
     echo("WARNING: front_rim_round_radius exceeds cavity inner radius; reduce radius.");
 
 if (enable_mount_gussets && (
@@ -323,7 +325,8 @@ module holder_shell_extruded_linear() {
                 linear_extrude(height = back_wall_height - floor_thickness + join_eps)
                     annular_sector_span_2d(cavity_inner_radius, cavity_outer_radius, open_a0, open_a1);
 
-            interior_floor_blend_subtractor_linear();
+            if (enable_interior_floor_blend)
+                interior_floor_blend_subtractor_linear();
         }
 
         // Remove front/shared strip above fill-line rim to keep front wall lower.
@@ -362,7 +365,7 @@ module holder_side_walls_linear() {
 }
 
 module shared_wall_blend_linear() {
-    if (shared_wall_blend_radius > 0) {
+    if (enable_shared_wall_blend && shared_wall_blend_radius > 0) {
         blend_outer = min(cavity_outer_radius, cavity_inner_radius + shared_wall_blend_radius);
         blend_h = min(front_wall_height, floor_thickness + shared_wall_blend_radius);
 
@@ -374,7 +377,7 @@ module shared_wall_blend_linear() {
 }
 
 module front_rim_round_cut_linear() {
-    if (front_rim_round_radius > 0 && front_wall_height > floor_thickness) {
+    if (enable_front_rim_round && front_rim_round_radius > 0 && front_wall_height > floor_thickness) {
         fillet_r = front_rim_round_radius;
         fillet_center_r = max(0.1, cavity_inner_radius - fillet_r);
 
@@ -387,7 +390,7 @@ module front_rim_round_cut_linear() {
 }
 
 module end_mount_gusset_linear(side = -1) {
-    if (enable_mount_gussets && show_holder_gussets) {
+    if (enable_mount_gussets) {
         gusset_span = max(0.2, mount_gusset_span_deg);
         a0 = match_sweep_to_holder
             ? ((side < 0) ? (a_start + join_eps) : max(a_start, a_end - gusset_span))
@@ -427,7 +430,7 @@ module holder_linear() {
         union() {
             if (show_holder_shell) holder_shell_extruded_linear();
             if (show_holder_side_walls) holder_side_walls_linear();
-            if (show_holder_blend) shared_wall_blend_linear();
+            shared_wall_blend_linear();
             holder_mount_gussets_linear();
         }
 

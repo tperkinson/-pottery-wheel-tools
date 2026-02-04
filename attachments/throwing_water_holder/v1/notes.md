@@ -63,7 +63,8 @@
   - `front_wall_height = depth + floor_thickness - 6`
   - `back_wall_height = depth + floor_thickness`
   - `match_sweep_to_holder = true` (`sweep_side_margin_deg` ignored when true)
-- `front_rim_round_radius = 3.0` (rounds the top inner edge of the front/shared wall on the basin side)
+  - `front_rim_round_radius = 3.0` (rounds the top inner edge of the front/shared wall on the basin side)
+  - Optional toggles: `enable_shared_wall_blend = true`, `enable_interior_floor_blend = true`, `enable_front_rim_round = true`
 - Derived estimate at defaults:
   - fill-line volume ≈ `947 ml`
   - headroom ≈ `109 ml`
