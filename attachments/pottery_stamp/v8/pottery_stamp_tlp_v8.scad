@@ -6,8 +6,8 @@ base_thickness = 6;
 letter_height  = 2.8;
 text_size      = 13* scale_factor;   // KEEP TEXT SAME SIZE
 
-handle_base_d  = 18;
-handle_top_d   = 30;
+handle_base_d  = 14;//18;
+handle_top_d   = 30;//30;
 handle_height  = 22;
 
 module base_disk() {
