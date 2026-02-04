@@ -17,6 +17,15 @@ This repo is organized as a reusable mount-platform project with versioned asset
 ## Build / Export
 - A `Makefile` is provided for consistent STL exports to `build/`.
 - Run `make help` to list available targets.
+- Run `make check` for fast geometry compile checks.
+
+## Start New Attachment
+- Scaffold a new attachment:
+  - `./scripts/new_attachment.sh <attachment_name> [version]`
+- Example:
+  - `./scripts/new_attachment.sh camera_mount v1`
+- Full guide:
+  - `docs/attachment_quickstart.md`
 
 ## Design Convention
 - Keep core interface geometry stable.
