@@ -63,8 +63,10 @@
   - `front_wall_height = depth + floor_thickness - 6`
   - `back_wall_height = depth + floor_thickness`
   - `match_sweep_to_holder = true` (`sweep_side_margin_deg` ignored when true)
-  - `front_rim_round_radius = 3.0` (rounds the top inner edge of the front/shared wall on the basin side)
-  - Optional toggles: `enable_shared_wall_blend = true`, `enable_interior_floor_blend = true`, `enable_front_rim_round = true`
+  - `front_rim_round_radius = 8.0` (rounds the top inner edge of the front/shared wall on the basin side)
+  - `back_rim_round_radius = 8.0` (rounds the top outer edge of the back wall)
+  - Optional toggles: `enable_shared_wall_blend = true`, `enable_interior_floor_blend = true`, `enable_front_rim_round = true`, `enable_back_rim_round = true`, `enable_vertical_edge_round = true`
+  - Vertical seam rounding: `vertical_edge_round_radius = 10.0`
 - Derived estimate at defaults:
   - fill-line volume ≈ `947 ml`
   - headroom ≈ `109 ml`
@@ -101,6 +103,8 @@
 - Warns if holder-only footprint likely exceeds Ender 3 V3 (`220x220`).
 - Warns if sweep/holder alignment is requested but `holder_angle_offset` is nonzero.
 - Warns on overly small/large `front_rim_round_radius`.
+- Warns on overly small/large `vertical_edge_round_radius`.
+- Warns on overly small/large `back_rim_round_radius`.
 
 ## Holder-Only Side-Print Option
 - `holder_only_side_print = true` rotates the holder-only sample onto its side.
