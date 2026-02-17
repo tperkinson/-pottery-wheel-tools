@@ -165,8 +165,9 @@ class RibShelfParams:
     slot_edge_cleanup_band_z_drop: float = 0.35
     slot_edge_cleanup_band_outside_ratio: float = 0.25
     sweep_side_cleanup_band_deg: float = 0.14
-    sweep_side_cleanup_z0: float = 0.0
-    sweep_side_cleanup_height: float = 6.0
+    sweep_side_cleanup_strip_width_mm: float = 1.00
+    sweep_side_cleanup_z0: float = -80.0
+    sweep_side_cleanup_height: float = 160.0
     sweep_side_cleanup_start_side: bool = True
     sweep_side_cleanup_end_side: bool = True
     mount_underside_fillet_radius: float = 1.2
@@ -677,34 +678,40 @@ def _build_edge_cleanup_band_cutter(
 def _build_sweep_side_cleanup_cutter(
     derived: Derived,
     side: str,
-    band_deg: float,
+    strip_width: float,
     z0: float,
     height: float,
 ):
-    band = max(0.0, band_deg)
-    if band <= 1e-6 or height <= 1e-6:
+    width = max(0.0, strip_width)
+    if width <= 1e-6 or height <= 1e-6:
         return None
+
+    # Assembly/world sweep span: shelf and clamp are both placed across this range.
+    a_start = derived.shelf_a_start + derived.attach_angle
+    a_end = derived.shelf_a_end + derived.attach_angle
 
     if side == "start":
-        a0 = derived.shelf_a_start
-        a1 = derived.shelf_a_start + band
+        cut = _box_min(
+            (derived.outer_radius + 4.0) * 2.0,
+            width,
+            height,
+            -(derived.outer_radius + 4.0),
+            0.0,
+            z0,
+        )
+        return cut.rotate(Axis.Z, a_start)
     elif side == "end":
-        a0 = derived.shelf_a_end - band
-        a1 = derived.shelf_a_end
+        cut = _box_min(
+            (derived.outer_radius + 4.0) * 2.0,
+            width,
+            height,
+            -(derived.outer_radius + 4.0),
+            -width,
+            z0,
+        )
+        return cut.rotate(Axis.Z, a_end)
     else:
         return None
-
-    if a1 <= a0:
-        return None
-    return _build_annular_sector_prism(
-        max(0.1, derived.inner_radius - 0.8),
-        derived.outer_radius + 0.8,
-        a0,
-        a1,
-        z0=z0,
-        height=height,
-        axis_r=derived.mount_wall_radius,
-    )
 
 
 def _slot_layout(params: RibShelfParams, floor_x_min: float) -> tuple[
@@ -1121,32 +1128,6 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
     if mask is not None:
         shelf = _coerce_single_shape(shelf.intersect(mask), "shelf_final_mask")
 
-    # Cleanup tiny wedge remnants at sweep side edges (start/end) created by support scallop booleans.
-    side_band_deg = max(0.0, params.sweep_side_cleanup_band_deg)
-    side_z0 = min(params.floor_thickness, params.sweep_side_cleanup_z0)
-    side_h = max(0.0, params.sweep_side_cleanup_height)
-    if side_band_deg > 0 and side_h > 0:
-        if params.sweep_side_cleanup_start_side:
-            side_cutter = _build_sweep_side_cleanup_cutter(
-                derived=derived,
-                side="start",
-                band_deg=side_band_deg,
-                z0=side_z0,
-                height=side_h,
-            )
-            if side_cutter is not None:
-                shelf = _coerce_single_shape(shelf - side_cutter, "shelf_sweep_side_cleanup_start")
-        if params.sweep_side_cleanup_end_side:
-            side_cutter = _build_sweep_side_cleanup_cutter(
-                derived=derived,
-                side="end",
-                band_deg=side_band_deg,
-                z0=side_z0,
-                height=side_h,
-            )
-            if side_cutter is not None:
-                shelf = _coerce_single_shape(shelf - side_cutter, "shelf_sweep_side_cleanup_end")
-
     shelf = _coerce_single_shape(shelf, "shelf_masked")
     return _prune_tiny_detached_solids(shelf, params.fragment_prune_max_volume_mm3, "shelf")
 
@@ -1220,6 +1201,40 @@ def build_assembly(params: RibShelfParams, profile: CClampProfile):
         mount_blend = _build_mount_underside_blend(params, derived, shelf_bottom_z)
         if mount_blend is not None:
             model = model + mount_blend
+
+    # Sweep-side cleanup must run on the full assembly so clamp and shelf share the exact same side edge.
+    side_band_deg = max(0.0, params.sweep_side_cleanup_band_deg)
+    side_strip_w = max(0.0, params.sweep_side_cleanup_strip_width_mm)
+    if side_strip_w <= 1e-6 and side_band_deg > 0:
+        side_strip_w = math.radians(side_band_deg) * derived.centerline_radius
+    side_h = max(0.0, params.sweep_side_cleanup_height)
+    if side_strip_w > 0 and side_h > 0:
+        if params.sweep_side_cleanup_start_side:
+            side_cutter = _build_sweep_side_cleanup_cutter(
+                derived=derived,
+                side="start",
+                strip_width=side_strip_w,
+                z0=params.sweep_side_cleanup_z0,
+                height=side_h,
+            )
+            if side_cutter is not None:
+                model = _coerce_single_shape(model - side_cutter, "assembly_sweep_side_cleanup_start")
+        if params.sweep_side_cleanup_end_side:
+            side_cutter = _build_sweep_side_cleanup_cutter(
+                derived=derived,
+                side="end",
+                strip_width=side_strip_w,
+                z0=params.sweep_side_cleanup_z0,
+                height=side_h,
+            )
+            if side_cutter is not None:
+                model = _coerce_single_shape(model - side_cutter, "assembly_sweep_side_cleanup_end")
+
+    # Keep "true zero" aligned to the cleaned sweep-start side for predictable side-print orientation.
+    bb = model.bounding_box()
+    if abs(bb.min.Y) > 1e-6:
+        model = model.translate((0.0, -bb.min.Y, 0.0))
+
     model = _coerce_single_shape(model, "assembly")
     model = _prune_tiny_detached_solids(model, params.fragment_prune_max_volume_mm3, "assembly")
     return model, derived
@@ -1277,7 +1292,8 @@ def print_checks(params: RibShelfParams, derived: Derived) -> None:
         f"back_side = {params.wall_print_sweep_render_back_side}"
     )
     print(
-        f"INFO: sweep_side_cleanup = band={params.sweep_side_cleanup_band_deg:.3f} deg, "
+        f"INFO: sweep_side_cleanup = strip={params.sweep_side_cleanup_strip_width_mm:.3f} mm "
+        f"(fallback_band={params.sweep_side_cleanup_band_deg:.3f} deg), "
         f"z0={params.sweep_side_cleanup_z0:.2f} mm, h={params.sweep_side_cleanup_height:.2f} mm, "
         f"start={params.sweep_side_cleanup_start_side}, end={params.sweep_side_cleanup_end_side}"
     )
