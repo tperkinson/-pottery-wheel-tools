@@ -159,15 +159,23 @@ class RibShelfParams:
     wall_floor_fillet_radius: float = 2.0
     slot_floor_scallop_max_radius: float = 3.0
     slot_floor_scallop_width_extra: float = 1.0
+    slot_floor_scallop_edge_overrun: float = 1.2
+    slot_edge_cleanup_band_width: float = 0.0
+    slot_edge_cleanup_band_height: float = 0.0
+    slot_edge_cleanup_band_z_drop: float = 0.35
+    slot_edge_cleanup_band_outside_ratio: float = 0.25
     mount_underside_fillet_radius: float = 1.2
     show_wall_print_sweeps: bool = True
     wall_print_sweep_circle_cut: bool = True
     wall_print_scallop_cut_x_bleed: float = 0.2
     wall_print_scallop_cut_y_overshoot: float = 0.8
     wall_print_scallop_cut_z_overshoot: float = 0.3
+    wall_print_scallop_edge_strip_width: float = 1.0
+    wall_print_scallop_cut_start_z: float = 0.6
     wall_print_sweep_render_front_side: bool = True
     wall_print_sweep_render_back_side: bool = False
-    wall_print_sweep_edge_inset: float = 0.35
+    wall_print_sweep_edge_inset: float = 0.0
+    fragment_prune_max_volume_mm3: float = 0.10
     sweep_support_margin_deg: float = 0.5
     ender3_v3_bed_x: float = 220.0
     ender3_v3_bed_y: float = 220.0
@@ -290,6 +298,44 @@ def _coerce_single_shape(shape_obj, label: str):
     if not shapes:
         raise ValueError(f"{label}: boolean operations produced no solids.")
     return shapes[0] if len(shapes) == 1 else Compound(shapes)
+
+
+def _prune_tiny_detached_solids(shape_obj, max_volume_mm3: float, label: str):
+    max_v = max(0.0, max_volume_mm3)
+    if max_v <= 0.0:
+        return shape_obj
+    try:
+        solids = list(shape_obj.solids())
+    except Exception:
+        return shape_obj
+    if len(solids) <= 1:
+        return shape_obj
+
+    kept: list = []
+    dropped_count = 0
+    dropped_total = 0.0
+    for solid in solids:
+        vol = abs(float(solid.volume))
+        if vol > max_v:
+            kept.append(solid)
+        else:
+            dropped_count += 1
+            dropped_total += vol
+
+    if not kept:
+        # Fallback safety: keep the largest solid if threshold would remove everything.
+        kept = [max(solids, key=lambda s: abs(float(s.volume)))]
+        dropped_count = max(0, len(solids) - 1)
+        dropped_total = sum(abs(float(s.volume)) for s in solids if s is not kept[0])
+
+    if dropped_count > 0:
+        print(
+            f"INFO: {label} pruned {dropped_count} tiny detached solids "
+            f"(<= {max_v:.3f} mm^3, total {dropped_total:.4f} mm^3)."
+        )
+    if len(kept) == 1:
+        return kept[0]
+    return Compound(kept)
 
 
 def _constant_z_edges(part, z_value: float, tol: float = 0.12) -> list:
@@ -425,6 +471,8 @@ def _build_wall_side_buttress_scallop_cutter(
     x_bleed_right: float = 0.0,
     y_overshoot: float = 0.0,
     z_overshoot: float = 0.0,
+    edge_strip_width: float = 0.0,
+    cut_start_z: float = 0.0,
 ):
     bleed_left = max(0.0, x_bleed_left)
     bleed_right = max(0.0, x_bleed_right)
@@ -458,7 +506,44 @@ def _build_wall_side_buttress_scallop_cutter(
     )
     if curved is None:
         return None
-    return _coerce_single_shape(straight - curved, "wall_side_buttress_scallop_cutter")
+    cutter = _coerce_single_shape(straight - curved, "wall_side_buttress_scallop_cutter")
+
+    # Keep an uncut strip near the tray edge so support toes stay anchored to the side edge.
+    keep_w = max(0.0, edge_strip_width)
+    dy_total = y_tray_cut - y_wall_edge
+    if keep_w > 0 and abs(dy_total) > 0.3:
+        keep_w = min(keep_w, max(0.0, abs(dy_total) - 0.15))
+        if keep_w > 0.01:
+            if dy_total >= 0:
+                keep_y0 = y_tray_cut - keep_w
+                keep_y1 = y_tray_cut + 0.3
+            else:
+                keep_y0 = y_tray_cut - 0.3
+                keep_y1 = y_tray_cut + keep_w
+            keep_box = _box_min(
+                (x1_cut - x0_cut) + 0.5,
+                max(0.1, keep_y1 - keep_y0),
+                (z_top - z_floor_cut) + 0.6,
+                x0_cut - 0.25,
+                keep_y0,
+                z_floor_cut - 0.3,
+            )
+            cutter = _coerce_single_shape(cutter - keep_box, "wall_side_buttress_scallop_cutter_keep_edge")
+
+    # Start the cut above the floor to avoid tiny toe notches at the tray edge.
+    start_z = z_floor_cut + max(0.0, cut_start_z)
+    if start_z < z_top - 0.2:
+        cut_box = _box_min(
+            (x1_cut - x0_cut) + 0.5,
+            abs(y_tray_cut - y_wall_edge) + 0.8,
+            (z_top - start_z) + 0.4,
+            x0_cut - 0.25,
+            min(y_wall_edge, y_tray_cut) - 0.4,
+            start_z,
+        )
+        cutter = _coerce_single_shape(cutter.intersect(cut_box), "wall_side_buttress_scallop_cutter_cut_window")
+
+    return cutter
 
 
 def _build_slot_floor_scallop_strip(
@@ -490,8 +575,11 @@ def _build_slot_floor_scallop_strip(
     else:
         y_start = max(left_y0, right_y0)
 
-    y0 = min(y_start, y_side)
-    y1 = max(y_start, y_side)
+    # Extend slightly past tray edge so final tray mask clips to a clean flush edge.
+    y_dir = 1.0 if (y_side - y_start) >= 0 else -1.0
+    y_side_ext = y_side + y_dir * max(0.0, params.slot_floor_scallop_edge_overrun)
+    y0 = min(y_start, y_side_ext)
+    y1 = max(y_start, y_side_ext)
     y_span = y1 - y0
     if y_span <= 0.2:
         return None
@@ -546,6 +634,39 @@ def _tray_side_y_at_x(derived: Derived, x_local: float, side: str, edge_inset: f
     outer_mag = math.sqrt(outer_term)
     y_mag = max(0.0, min(side_mag, outer_mag) - inset)
     return sign * y_mag
+
+
+def _build_edge_cleanup_band_cutter(
+    derived: Derived,
+    side: str,
+    band_width: float,
+    z0: float,
+    height: float,
+    outside_ratio: float,
+):
+    width = max(0.0, band_width)
+    h = max(0.0, height)
+    if width <= 1e-6 or h <= 1e-6:
+        return None
+
+    delta_deg = math.degrees(width / max(1e-6, derived.centerline_radius))
+    out_deg = delta_deg * max(0.0, outside_ratio)
+    if side == "front":
+        a0 = derived.shelf_a_start - out_deg
+        a1 = derived.shelf_a_start + delta_deg
+    else:
+        a0 = derived.shelf_a_end - delta_deg
+        a1 = derived.shelf_a_end + out_deg
+
+    return _build_annular_sector_prism(
+        max(0.1, derived.inner_radius - 0.8),
+        derived.outer_radius + 0.8,
+        a0,
+        a1,
+        z0=z0,
+        height=h,
+        axis_r=derived.mount_wall_radius,
+    )
 
 
 def _slot_layout(params: RibShelfParams, floor_x_min: float) -> tuple[
@@ -826,6 +947,8 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
             x_outboard = x1 + (x_bleed_right if params.wall_print_sweep_circle_cut else 0.0)
             y_front_target = _tray_side_y_at_x(derived, x_outboard, "front", params.wall_print_sweep_edge_inset)
             y_back_target = _tray_side_y_at_x(derived, x_outboard, "back", params.wall_print_sweep_edge_inset)
+            y_overshoot_eff = max(params.wall_print_scallop_cut_y_overshoot, x_bleed_left, x_bleed_right)
+            z_overshoot_eff = max(params.wall_print_scallop_cut_z_overshoot, 0.45 * max(x_bleed_left, x_bleed_right))
 
             if params.wall_print_sweep_render_front_side:
                 buttress_front = _build_single_wall_side_buttress(
@@ -849,8 +972,10 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
                         z_top=z_floor + wall_h,
                         x_bleed_left=x_bleed_left,
                         x_bleed_right=x_bleed_right,
-                        y_overshoot=params.wall_print_scallop_cut_y_overshoot,
-                        z_overshoot=params.wall_print_scallop_cut_z_overshoot,
+                        y_overshoot=y_overshoot_eff,
+                        z_overshoot=z_overshoot_eff,
+                        edge_strip_width=params.wall_print_scallop_edge_strip_width,
+                        cut_start_z=params.wall_print_scallop_cut_start_z,
                     )
                     if cutter_front is not None:
                         buttress_scallop_cutters.append(cutter_front)
@@ -877,8 +1002,10 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
                         z_top=z_floor + wall_h,
                         x_bleed_left=x_bleed_left,
                         x_bleed_right=x_bleed_right,
-                        y_overshoot=params.wall_print_scallop_cut_y_overshoot,
-                        z_overshoot=params.wall_print_scallop_cut_z_overshoot,
+                        y_overshoot=y_overshoot_eff,
+                        z_overshoot=z_overshoot_eff,
+                        edge_strip_width=params.wall_print_scallop_edge_strip_width,
+                        cut_start_z=params.wall_print_scallop_cut_start_z,
                     )
                     if cutter_back is not None:
                         buttress_scallop_cutters.append(cutter_back)
@@ -916,6 +1043,9 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
         "shelf_vertical_edges",
     )
 
+    shelf = _coerce_single_shape(shelf, "shelf_pre_cleanup")
+
+    # Build final tray-edge mask once; apply as the final operation after all local cleanup cuts.
     mask = _build_annular_sector_prism(
         max(0.1, derived.inner_radius - 0.4),
         derived.outer_radius + 0.4,
@@ -925,10 +1055,35 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
         height=derived.mask_height,
         axis_r=derived.mount_wall_radius,
     )
-    shelf = _coerce_single_shape(shelf, "shelf")
+
+    # Final edge cleanup band cut to remove tiny residual tabs at tray side boundaries.
+    cleanup_band_sides = []
+    if params.wall_print_sweep_render_front_side:
+        cleanup_band_sides.append("front")
+    if params.wall_print_sweep_render_back_side:
+        cleanup_band_sides.append("back")
+    cleanup_band_width = max(0.0, params.slot_edge_cleanup_band_width)
+    cleanup_band_height = max(0.0, params.slot_edge_cleanup_band_height)
+    cleanup_band_drop = max(0.0, params.slot_edge_cleanup_band_z_drop)
+    if cleanup_band_width > 0 and cleanup_band_height > 0 and cleanup_band_sides:
+        cleanup_z0 = params.floor_thickness - cleanup_band_drop
+        cleanup_h = cleanup_band_height + cleanup_band_drop
+        for side in cleanup_band_sides:
+            cleanup_cutter = _build_edge_cleanup_band_cutter(
+                derived=derived,
+                side=side,
+                band_width=cleanup_band_width,
+                z0=cleanup_z0,
+                height=cleanup_h,
+                outside_ratio=params.slot_edge_cleanup_band_outside_ratio,
+            )
+            if cleanup_cutter is not None:
+                shelf = _coerce_single_shape(shelf - cleanup_cutter, f"shelf_edge_cleanup_band_{side}")
+
     if mask is not None:
-        shelf = shelf.intersect(mask)
-    return _coerce_single_shape(shelf, "shelf_masked")
+        shelf = _coerce_single_shape(shelf.intersect(mask), "shelf_final_mask")
+    shelf = _coerce_single_shape(shelf, "shelf_masked")
+    return _prune_tiny_detached_solids(shelf, params.fragment_prune_max_volume_mm3, "shelf")
 
 
 def _build_mount_underside_blend(params: RibShelfParams, derived: Derived, shelf_bottom_z: float):
@@ -1001,6 +1156,7 @@ def build_assembly(params: RibShelfParams, profile: CClampProfile):
         if mount_blend is not None:
             model = model + mount_blend
     model = _coerce_single_shape(model, "assembly")
+    model = _prune_tiny_detached_solids(model, params.fragment_prune_max_volume_mm3, "assembly")
     return model, derived
 
 
@@ -1033,7 +1189,10 @@ def print_checks(params: RibShelfParams, derived: Derived) -> None:
         f"INFO: wall_root_fillet_mode = slot_scallop_strip, "
         f"legacy_wall_floor_radius = {params.wall_floor_fillet_radius:.2f} mm, "
         f"slot_scallop_max_radius = {params.slot_floor_scallop_max_radius:.2f} mm, "
-        f"slot_scallop_width_extra = {params.slot_floor_scallop_width_extra:.2f} mm (unused in current mode)"
+        f"slot_scallop_width_extra = {params.slot_floor_scallop_width_extra:.2f} mm (unused in current mode), "
+        f"slot_scallop_edge_overrun = {params.slot_floor_scallop_edge_overrun:.2f} mm, "
+        f"edge_cleanup_band = w{params.slot_edge_cleanup_band_width:.2f}/h{params.slot_edge_cleanup_band_height:.2f}/drop{params.slot_edge_cleanup_band_z_drop:.2f} mm, "
+        f"outside_ratio = {params.slot_edge_cleanup_band_outside_ratio:.2f}"
     )
     print(
         f"INFO: mount_underside_blend_mode = constructive_swept, radius = {max(0.0, min(params.mount_underside_fillet_radius, max(0.2, params.mount_overlap - 0.35))):.2f} mm"
@@ -1044,8 +1203,10 @@ def print_checks(params: RibShelfParams, derived: Derived) -> None:
         f"circle_cut = {params.wall_print_sweep_circle_cut}, "
         f"edge_target = outboard_radial_point, "
         f"scallop_cut_x_bleed = auto_from_adjacent_slot_radii + {params.wall_print_scallop_cut_x_bleed:.2f} mm margin, "
-        f"scallop_cut_y_overshoot = {params.wall_print_scallop_cut_y_overshoot:.2f} mm, "
-        f"scallop_cut_z_overshoot = {params.wall_print_scallop_cut_z_overshoot:.2f} mm, "
+        f"scallop_cut_y_overshoot = max({params.wall_print_scallop_cut_y_overshoot:.2f}, local_bleed) mm, "
+        f"scallop_cut_z_overshoot = max({params.wall_print_scallop_cut_z_overshoot:.2f}, 0.45*local_bleed) mm, "
+        f"scallop_edge_strip_width = {params.wall_print_scallop_edge_strip_width:.2f} mm, "
+        f"scallop_cut_start_z = {params.wall_print_scallop_cut_start_z:.2f} mm, "
         f"edge_inset = {params.wall_print_sweep_edge_inset:.2f} mm, "
         f"front_side = {params.wall_print_sweep_render_front_side}, "
         f"back_side = {params.wall_print_sweep_render_back_side}"
