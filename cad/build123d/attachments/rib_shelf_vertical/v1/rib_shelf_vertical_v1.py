@@ -1,0 +1,1050 @@
+#!/usr/bin/env python3
+"""Radial vertical rib shelf attachment (v1) in build123d."""
+
+from __future__ import annotations
+
+import argparse
+import math
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+# -------------------------------
+# Primary knobs (edit these first)
+# -------------------------------
+PRIMARY_SLOT_COUNT = 7
+PRIMARY_SLOT_WIDTHS_MM = [3.0, 3.5, 4.0, 4.5, 5.5, 7.0, 9.0]
+PRIMARY_SLOT_DEPTH_MM = 38.0
+PRIMARY_SLOT_HEIGHT_MM = 31.5
+PRIMARY_INNER_WALL_HEIGHT_MM = 24.0
+PRIMARY_OUTER_WALL_HEIGHT_MM = 28.0
+PRIMARY_INNER_WALL_LENGTH_MM = 34.0
+PRIMARY_OUTER_WALL_LENGTH_MM = 42.0
+PRIMARY_SLOT_PITCH_MM = 14.0
+PRIMARY_RADIAL_WIDTH_MM = 102.0
+PRIMARY_ARC_LENGTH_MM = 83.0
+PRIMARY_FLOOR_THICKNESS_MM = 4.0
+PRIMARY_WALL_THICKNESS_MM = 3.2
+PRIMARY_DRAIN_CHANNEL_WIDTH_MM = 3.0
+PRIMARY_DRAIN_CHANNEL_DEPTH_MM = 1.6
+PRIMARY_TILT_DEG = 0.0
+PRIMARY_MOUNT_CLOCK_POSITION = 4
+PRIMARY_MATERIAL = "PLA"
+PRIMARY_MOUNT_OVERLAP_MM = 16.0
+
+PRIMARY_SWEEP_ANGLE_DEG = 20.0
+PRIMARY_SWEEP_DIRECTION = 1  # +1: 0->+angle, -1: 0->-angle
+PRIMARY_RADIUS_MM = 222.25
+PRIMARY_PAD_LENGTH_MM = 12.0
+PRIMARY_CLAMP_BACK_WALL_STRETCH_MM = 0.0
+
+NOZZLE_DIAMETER_MM = 0.4
+
+try:
+    from build123d import (
+        Align,
+        Axis,
+        Box,
+        BuildLine,
+        BuildPart,
+        BuildSketch,
+        Compound,
+        Cylinder,
+        Circle,
+        Line,
+        Locations,
+        Plane,
+        Polyline,
+        ThreePointArc,
+        ShapeList,
+        export_stl,
+        extrude,
+        make_face,
+        revolve,
+    )
+except ImportError as exc:
+    print(
+        "Missing dependency: build123d. Install with:\n"
+        "  python3.13 -m pip install -r cad/build123d/requirements.txt",
+        file=sys.stderr,
+    )
+    print("build123d currently requires Python < 3.14.", file=sys.stderr)
+    raise SystemExit(2) from exc
+
+
+REPO_ROOT = Path(__file__).resolve().parents[5]
+CORE_PROFILE_SCAD = REPO_ROOT / "core_mount_system/c_clamp/v1/c_clamp_profile_topref_v1.scad"
+DEFAULT_OUTPUT = REPO_ROOT / "build/rib_shelf_vertical_v1_b123d.stl"
+
+# -------------------------------
+# Run config (same names across scripts)
+# -------------------------------
+USE_HEAD_CONFIG = False
+HEAD_PREVIEW = True
+HEAD_EXPORT = False
+HEAD_OUTPUT = DEFAULT_OUTPUT
+
+
+@dataclass(frozen=True)
+class RuntimeOptions:
+    output: Path
+    preview: bool
+    export: bool
+
+
+@dataclass(frozen=True)
+class CClampProfile:
+    min_profile_x: float
+    max_profile_x: float
+    min_profile_y: float
+    max_profile_y: float
+    hook_center_x: float
+    points: list[tuple[float, float]]
+
+
+@dataclass(frozen=True)
+class RibShelfParams:
+    # -------------------------------
+    # Quick Tuning
+    # -------------------------------
+    slot_count: int = PRIMARY_SLOT_COUNT
+    slot_widths: tuple[float, ...] = tuple(PRIMARY_SLOT_WIDTHS_MM)
+    slot_depth: float = PRIMARY_SLOT_DEPTH_MM
+    slot_height: float = PRIMARY_SLOT_HEIGHT_MM
+    inner_wall_height: float = PRIMARY_INNER_WALL_HEIGHT_MM
+    outer_wall_height: float = PRIMARY_OUTER_WALL_HEIGHT_MM
+    inner_wall_length: float = PRIMARY_INNER_WALL_LENGTH_MM
+    outer_wall_length: float = PRIMARY_OUTER_WALL_LENGTH_MM
+    slot_pitch: float = PRIMARY_SLOT_PITCH_MM
+    radial_width: float = PRIMARY_RADIAL_WIDTH_MM
+    arc_length: float = PRIMARY_ARC_LENGTH_MM
+    floor_thickness: float = PRIMARY_FLOOR_THICKNESS_MM
+    wall_thickness: float = PRIMARY_WALL_THICKNESS_MM
+    drain_channel_width: float = PRIMARY_DRAIN_CHANNEL_WIDTH_MM
+    drain_channel_depth: float = PRIMARY_DRAIN_CHANNEL_DEPTH_MM
+    tilt_deg: float = PRIMARY_TILT_DEG
+    mount_clock_position: int = PRIMARY_MOUNT_CLOCK_POSITION
+    material: str = PRIMARY_MATERIAL
+
+    sweep_angle: float = PRIMARY_SWEEP_ANGLE_DEG
+    sweep_direction: int = PRIMARY_SWEEP_DIRECTION
+    radius: float = PRIMARY_RADIUS_MM
+    radius_ref_mode: str = "hook_center"
+    axis_z: float = 0.0
+    pad_length: float = PRIMARY_PAD_LENGTH_MM
+    pad_thickness: float = 4.0
+    pad_overlap: float = 1.0
+    mount_overlap: float = PRIMARY_MOUNT_OVERLAP_MM
+    pad_offset_y: float = 0.0
+    clamp_back_wall_stretch: float = PRIMARY_CLAMP_BACK_WALL_STRETCH_MM
+    shelf_top_offset: float = 0.0
+
+    show_clamp: bool = True
+    show_pad: bool = True
+    show_shelf: bool = True
+
+    # -------------------------------
+    # Strength / Printability
+    # -------------------------------
+    min_wall_for_nozzle_multiplier: float = 3.0
+    min_floor_recommended: float = 2.4
+    min_drain_depth_recommended: float = 1.0
+    max_projection: float = 127.0
+
+    # -------------------------------
+    # Advanced Controls
+    # -------------------------------
+    edge_fillet_radius: float = 0.9
+    wall_floor_fillet_radius: float = 2.0
+    mount_underside_fillet_radius: float = 1.2
+    show_wall_print_sweeps: bool = True
+    wall_print_sweep_circle_cut: bool = False
+    wall_print_sweep_render_front_side: bool = True
+    wall_print_sweep_render_back_side: bool = False
+    wall_print_sweep_edge_inset: float = 0.35
+    sweep_support_margin_deg: float = 0.5
+    ender3_v3_bed_x: float = 220.0
+    ender3_v3_bed_y: float = 220.0
+
+
+@dataclass(frozen=True)
+class Derived:
+    radius_ref_x: float
+    axis_x: float
+    axis_shift_x: float
+    mount_wall_radius: float
+    pad_outer_radius: float
+    inner_radius: float
+    outer_radius: float
+    centerline_radius: float
+    sweep_angle_eff: float
+    sweep_sign: float
+    shelf_angle_deg: float
+    attach_angle: float
+    shelf_a_start: float
+    shelf_a_end: float
+    holder_top_z: float
+    holder_profile_y_sweep: float
+    floor_x_min: float
+    floor_y_span: float
+    slot_y_front: float
+    slot_y_back: float
+    lane_bounds: list[tuple[float, float]]
+    divider_bounds: list[tuple[float, float]]
+    lane_centers: list[float]
+    lane_gaps_extra: list[float]
+    total_lane_cluster_width: float
+    wall_heights: list[float]
+    wall_lengths: list[float]
+    mask_z0: float
+    mask_height: float
+    intended_mount_clock_position: int
+
+
+def _parse_scalar(text: str, name: str) -> float:
+    match = re.search(rf"^\s*{re.escape(name)}\s*=\s*([-+]?\d*\.?\d+)\s*;", text, re.MULTILINE)
+    if not match:
+        raise ValueError(f"Missing scalar in profile file: {name}")
+    return float(match.group(1))
+
+
+def load_c_clamp_profile(path: Path = CORE_PROFILE_SCAD) -> CClampProfile:
+    text = path.read_text(encoding="utf-8")
+    points_match = re.search(r"profile_points\s*=\s*\[(.*?)\];", text, re.DOTALL)
+    if not points_match:
+        raise ValueError(f"Missing profile_points array in {path}")
+
+    point_pairs = re.findall(r"\[\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\]", points_match.group(1))
+    points = [(float(x), float(y)) for x, y in point_pairs]
+    if not points:
+        raise ValueError(f"No points parsed from profile_points in {path}")
+
+    return CClampProfile(
+        min_profile_x=_parse_scalar(text, "min_profile_x"),
+        max_profile_x=_parse_scalar(text, "max_profile_x"),
+        min_profile_y=_parse_scalar(text, "min_profile_y"),
+        max_profile_y=_parse_scalar(text, "max_profile_y"),
+        hook_center_x=_parse_scalar(text, "hook_center_x"),
+        points=points,
+    )
+
+
+def _canonical_back_wall_bottom_y(profile: CClampProfile) -> float:
+    tol = 1e-5
+    wall_ys = [y for (x, y) in profile.points if abs(x - profile.max_profile_x) <= tol]
+    if not wall_ys:
+        raise ValueError("Could not find canonical back-wall points at max_profile_x.")
+    return min(wall_ys)
+
+
+def stretch_profile_from_back_wall_mid(profile: CClampProfile, stretch_mm: float) -> CClampProfile:
+    if abs(stretch_mm) <= 1e-9:
+        return profile
+
+    base_back_wall_bottom_y = _canonical_back_wall_bottom_y(profile)
+    base_back_wall_mid_y = (profile.max_profile_y + base_back_wall_bottom_y) * 0.5
+    upper_shift = stretch_mm * 0.5
+    lower_shift = -stretch_mm * 0.5
+
+    stretched_points = [
+        (x, y + (upper_shift if y >= base_back_wall_mid_y else lower_shift))
+        for (x, y) in profile.points
+    ]
+    ys = [y for (_, y) in stretched_points]
+    return CClampProfile(
+        min_profile_x=profile.min_profile_x,
+        max_profile_x=profile.max_profile_x,
+        min_profile_y=min(ys),
+        max_profile_y=max(ys),
+        hook_center_x=profile.hook_center_x,
+        points=stretched_points,
+    )
+
+
+def _safe_fillet(part, edges: list, radius: float, label: str):
+    if radius <= 0 or not edges:
+        return part
+    for scale in (1.0, 0.8, 0.6, 0.45):
+        try_radius = radius * scale
+        if try_radius < 0.15:
+            continue
+        try:
+            if scale < 0.999:
+                print(f"INFO: {label} fillet reduced from {radius:.2f} to {try_radius:.2f}")
+            return part.fillet(try_radius, edges)
+        except Exception:
+            continue
+    return part
+
+
+def _coerce_single_shape(shape_obj, label: str):
+    if not isinstance(shape_obj, ShapeList):
+        return shape_obj
+    shapes = list(shape_obj)
+    if not shapes:
+        raise ValueError(f"{label}: boolean operations produced no solids.")
+    return shapes[0] if len(shapes) == 1 else Compound(shapes)
+
+
+def _constant_z_edges(part, z_value: float, tol: float = 0.12) -> list:
+    return [
+        edge
+        for edge in part.edges()
+        if abs(edge.bounding_box().min.Z - z_value) <= tol and abs(edge.bounding_box().max.Z - z_value) <= tol
+    ]
+
+
+def _revolve_closed_profile(points_xz: list[tuple[float, float]], sweep_angle: float):
+    with BuildPart() as part:
+        with BuildSketch(Plane.XZ):
+            with BuildLine():
+                Polyline(*points_xz, close=True)
+            make_face()
+        revolve(axis=Axis.Z, revolution_arc=sweep_angle)
+    return part.part
+
+
+def _seg_count_for_span(a0_deg: float, a1_deg: float) -> int:
+    span = abs(a1_deg - a0_deg)
+    return max(18, int(math.ceil(span / 2.2)) + 2)
+
+
+def _arc_points(radius: float, a0_deg: float, a1_deg: float, n: int, x_center: float) -> list[tuple[float, float]]:
+    if n < 2:
+        n = 2
+    points: list[tuple[float, float]] = []
+    for i in range(n):
+        t = i / (n - 1)
+        ang = math.radians(a0_deg + (a1_deg - a0_deg) * t)
+        points.append((x_center + radius * math.cos(ang), radius * math.sin(ang)))
+    return points
+
+
+def _annular_sector_points(
+    r_in: float,
+    r_out: float,
+    a0_deg: float,
+    a1_deg: float,
+    x_center: float,
+) -> list[tuple[float, float]]:
+    n = _seg_count_for_span(a0_deg, a1_deg)
+    outer = _arc_points(r_out, a0_deg, a1_deg, n, x_center)
+    inner = _arc_points(r_in, a1_deg, a0_deg, n, x_center)
+    return outer + inner
+
+
+def _build_annular_sector_prism(
+    r_in: float,
+    r_out: float,
+    a0_deg: float,
+    a1_deg: float,
+    z0: float,
+    height: float,
+    axis_r: float,
+):
+    if r_out <= r_in or height <= 0 or a1_deg <= a0_deg:
+        return None
+
+    points = _annular_sector_points(r_in, r_out, a0_deg, a1_deg, -axis_r)
+    with BuildPart() as part:
+        with BuildSketch(Plane.XY.offset(z0)):
+            with BuildLine():
+                Polyline(*points, close=True)
+            make_face()
+        extrude(amount=height)
+    return part.part
+
+
+def _box_min(x: float, y: float, z: float, x0: float, y0: float, z0: float):
+    return Box(x, y, z, align=(Align.MIN, Align.MIN, Align.MIN)).translate((x0, y0, z0))
+
+
+def _box_center_minmax(x: float, y: float, z: float, cx: float, y0: float, z_top: float):
+    return Box(x, y, z, align=(Align.CENTER, Align.MIN, Align.MAX)).translate((cx, y0, z_top))
+
+
+def _build_single_wall_side_buttress(
+    x0: float,
+    x1: float,
+    y_wall_edge: float,
+    y_tray_side: float,
+    z_floor: float,
+    z_top: float,
+    use_arc: bool,
+):
+    x_span = x1 - x0
+    y_span = abs(y_tray_side - y_wall_edge)
+    z_span = z_top - z_floor
+    if x_span <= 0.2 or y_span <= 0.2 or z_span <= 0.2:
+        return None
+
+    start = (y_wall_edge, z_top)
+    end = (y_tray_side, z_floor)
+
+    def _make(curved: bool):
+        with BuildPart() as sweep:
+            with BuildSketch(Plane.YZ):
+                with BuildLine():
+                    Line((y_tray_side, z_floor), (y_wall_edge, z_floor))
+                    Line((y_wall_edge, z_floor), start)
+                    if curved:
+                        # Inward scoop ("circle-cut" feel) to reduce bulk near tray edge.
+                        y_mid = y_wall_edge + (y_tray_side - y_wall_edge) * 0.65
+                        z_mid = z_floor + (z_top - z_floor) * 0.24
+                        ThreePointArc(start, (y_mid, z_mid), end)
+                    else:
+                        Line(start, end)
+                make_face()
+            extrude(amount=x_span)
+        return sweep.part.translate((x0, 0.0, 0.0))
+
+    if use_arc:
+        try:
+            return _make(True)
+        except Exception:
+            pass
+    return _make(False)
+
+
+def _tray_side_y_at_x(derived: Derived, x_local: float, side: str, edge_inset: float = 0.0) -> float:
+    # Tray perimeter on a given side is constrained by both:
+    # 1) side radial line at shelf_a_start/end, and
+    # 2) outer annulus arc near the outboard radius.
+    angle_deg = derived.shelf_a_end if side == "back" else derived.shelf_a_start
+    sign = 1.0 if angle_deg >= 0 else -1.0
+    angle_abs = abs(math.radians(angle_deg))
+    radius_along_axis = x_local + derived.mount_wall_radius
+    inset = max(0.0, edge_inset)
+
+    side_mag = max(0.0, radius_along_axis * math.tan(angle_abs))
+    outer_r = max(0.1, derived.outer_radius - inset)
+    outer_term = max(0.0, outer_r * outer_r - radius_along_axis * radius_along_axis)
+    outer_mag = math.sqrt(outer_term)
+    y_mag = max(0.0, min(side_mag, outer_mag) - inset)
+    return sign * y_mag
+
+
+def _slot_layout(params: RibShelfParams, floor_x_min: float) -> tuple[
+    list[tuple[float, float]],
+    list[tuple[float, float]],
+    list[float],
+    list[float],
+    float,
+]:
+    count = max(1, params.slot_count)
+    widths_raw = list(params.slot_widths)
+    if len(widths_raw) < count:
+        widths_raw = widths_raw + [widths_raw[-1] if widths_raw else 4.0] * (count - len(widths_raw))
+    widths = [max(0.2, widths_raw[i]) for i in range(count)]
+
+    # Layout lanes between inner/outer guard walls.
+    # Keep lane spacing driven by widths + target pitch only; do not "fill" to tray width.
+    # This lets radial_width extend tray margins without stretching lane spacing.
+    available_internal = max(0.0, params.radial_width - 2.0 * params.wall_thickness)
+    base_cluster = sum(widths) + max(0, count - 1) * params.wall_thickness
+
+    desired_extras: list[float] = []
+    for i in range(max(0, count - 1)):
+        nominal_center_span = widths[i] * 0.5 + params.wall_thickness + widths[i + 1] * 0.5
+        desired_extras.append(max(0.0, params.slot_pitch - nominal_center_span))
+
+    available_extras = max(0.0, available_internal - base_cluster)
+    desired_extras_total = sum(desired_extras)
+    if count <= 1:
+        extra_gaps = []
+    elif available_extras <= 1e-9:
+        extra_gaps = [0.0] * (count - 1)
+    else:
+        if desired_extras_total > 1e-9:
+            scale = min(1.0, available_extras / desired_extras_total)
+            extra_gaps = [gap * scale for gap in desired_extras]
+        else:
+            extra_gaps = [0.0] * (count - 1)
+
+    total_cluster = base_cluster + sum(extra_gaps)
+    x_cursor = floor_x_min + params.wall_thickness
+
+    lane_bounds: list[tuple[float, float]] = []
+    divider_bounds: list[tuple[float, float]] = []
+    lane_centers: list[float] = []
+
+    for i, width in enumerate(widths):
+        left = x_cursor
+        right = left + width
+        lane_bounds.append((left, right))
+        lane_centers.append((left + right) * 0.5)
+        x_cursor = right
+        if i < count - 1:
+            d_left = x_cursor
+            d_right = d_left + params.wall_thickness
+            divider_bounds.append((d_left, d_right))
+            x_cursor = d_right + extra_gaps[i]
+
+    return lane_bounds, divider_bounds, lane_centers, extra_gaps, total_cluster
+
+
+def derive(params: RibShelfParams, profile: CClampProfile) -> Derived:
+    radius_ref_x = profile.hook_center_x if params.radius_ref_mode == "hook_center" else profile.max_profile_x
+    axis_x = radius_ref_x - params.radius
+    axis_shift_x = -axis_x
+    mount_wall_radius = profile.max_profile_x + axis_shift_x
+    pad_outer_radius = mount_wall_radius + params.pad_length
+
+    # Keep a robust shelf-to-pad overlap region for one-piece prints.
+    inner_radius = pad_outer_radius - max(params.mount_overlap, params.wall_thickness)
+    outer_radius = inner_radius + params.radial_width
+    centerline_radius = (inner_radius + outer_radius) * 0.5
+    shelf_angle_deg = math.degrees(params.arc_length / max(1e-6, centerline_radius))
+    sweep_angle_eff = shelf_angle_deg + max(0.0, params.sweep_support_margin_deg)
+    sweep_sign = 1.0 if params.sweep_direction >= 0 else -1.0
+
+    # Keep local shelf symmetric (prevents clipping of ±Y linear wall geometry),
+    # then rotate into the clamp's 0..sweep span so tray and clamp sides align.
+    attach_angle = sweep_sign * sweep_angle_eff * 0.5
+    shelf_a_start = -sweep_angle_eff * 0.5
+    shelf_a_end = sweep_angle_eff * 0.5
+
+    holder_top_z = profile.max_profile_y + params.pad_offset_y + params.shelf_top_offset - params.axis_z
+    holder_profile_y_sweep = holder_top_z
+
+    floor_x_min = -mount_wall_radius + inner_radius
+    floor_y_span = max(params.arc_length + params.wall_thickness * 1.5, params.slot_depth + params.wall_thickness * 6.0)
+    slot_y_front = -params.slot_depth * 0.5
+    slot_y_back = slot_y_front + params.slot_depth
+
+    lane_bounds, divider_bounds, lane_centers, lane_gaps_extra, total_cluster = _slot_layout(params, floor_x_min)
+
+    wall_count = max(2, params.slot_count + 1)
+    wall_h0 = max(6.0, params.inner_wall_height)
+    wall_h1 = max(wall_h0, params.outer_wall_height)
+    wall_heights = [
+        wall_h0 + (wall_h1 - wall_h0) * (i / (wall_count - 1))
+        for i in range(wall_count)
+    ]
+    wall_l0 = max(params.wall_thickness * 2.0, min(params.slot_depth, params.inner_wall_length))
+    wall_l1 = max(wall_l0, min(params.slot_depth, params.outer_wall_length))
+    wall_lengths = [
+        wall_l0 + (wall_l1 - wall_l0) * (i / (wall_count - 1))
+        for i in range(wall_count)
+    ]
+
+    mask_z0 = -1.0
+    mask_height = params.floor_thickness + wall_h1 + 4.0
+
+    return Derived(
+        radius_ref_x=radius_ref_x,
+        axis_x=axis_x,
+        axis_shift_x=axis_shift_x,
+        mount_wall_radius=mount_wall_radius,
+        pad_outer_radius=pad_outer_radius,
+        inner_radius=inner_radius,
+        outer_radius=outer_radius,
+        centerline_radius=centerline_radius,
+        sweep_angle_eff=sweep_angle_eff,
+        sweep_sign=sweep_sign,
+        shelf_angle_deg=shelf_angle_deg,
+        attach_angle=attach_angle,
+        shelf_a_start=shelf_a_start,
+        shelf_a_end=shelf_a_end,
+        holder_top_z=holder_top_z,
+        holder_profile_y_sweep=holder_profile_y_sweep,
+        floor_x_min=floor_x_min,
+        floor_y_span=floor_y_span,
+        slot_y_front=slot_y_front,
+        slot_y_back=slot_y_back,
+        lane_bounds=lane_bounds,
+        divider_bounds=divider_bounds,
+        lane_centers=lane_centers,
+        lane_gaps_extra=lane_gaps_extra,
+        total_lane_cluster_width=total_cluster,
+        wall_heights=wall_heights,
+        wall_lengths=wall_lengths,
+        mask_z0=mask_z0,
+        mask_height=mask_height,
+        intended_mount_clock_position=params.mount_clock_position,
+    )
+
+
+def build_clamp_pad_sweep(params: RibShelfParams, profile: CClampProfile, derived: Derived):
+    parts = []
+    x_shift = derived.axis_shift_x
+    z_shift = -params.axis_z
+
+    if params.show_clamp:
+        clamp_profile_xz = [(x + x_shift, y + z_shift) for (x, y) in profile.points]
+        parts.append(_revolve_closed_profile(clamp_profile_xz, derived.sweep_angle_eff))
+
+    if params.show_pad:
+        x0 = profile.max_profile_x - params.pad_overlap + x_shift
+        z0 = profile.max_profile_y - params.pad_thickness + params.pad_offset_y + z_shift
+        x1 = x0 + params.pad_length + params.pad_overlap
+        z1 = z0 + params.pad_thickness
+        pad_profile_xz = [(x0, z0), (x1, z0), (x1, z1), (x0, z1)]
+        parts.append(_revolve_closed_profile(pad_profile_xz, derived.sweep_angle_eff))
+
+    if not parts:
+        return None
+
+    merged = parts[0]
+    for piece in parts[1:]:
+        merged = merged + piece
+    if derived.sweep_sign < 0:
+        merged = merged.rotate(Axis.Z, -derived.sweep_angle_eff)
+    return merged
+
+
+def build_shelf_linear(params: RibShelfParams, derived: Derived):
+    # Radial tray floor: build directly as annular-sector prism.
+    floor = _build_annular_sector_prism(
+        max(0.1, derived.inner_radius),
+        derived.outer_radius,
+        derived.shelf_a_start,
+        derived.shelf_a_end,
+        z0=0.0,
+        height=params.floor_thickness,
+        axis_r=derived.mount_wall_radius,
+    )
+    if floor is None:
+        raise ValueError("Invalid radial floor dimensions.")
+
+    # Full-height boundary walls so the first and last slot are fully usable.
+    wall_specs: list[tuple[float, float, float, float, float, str]] = []
+
+    inner_len = derived.wall_lengths[0]
+    inner_y0 = -inner_len * 0.5
+    inner_x0 = (
+        derived.lane_bounds[0][0] - params.wall_thickness
+        if derived.lane_bounds
+        else derived.floor_x_min
+    )
+    inner_guard = _box_min(
+        params.wall_thickness,
+        inner_len,
+        derived.wall_heights[0],
+        inner_x0,
+        inner_y0,
+        params.floor_thickness,
+    )
+    wall_specs.append(
+        (
+            inner_x0,
+            inner_x0 + params.wall_thickness,
+            inner_y0,
+            inner_y0 + inner_len,
+            derived.wall_heights[0],
+            "inner_guard",
+        )
+    )
+    outer_len = derived.wall_lengths[-1]
+    outer_x0 = (
+        derived.lane_bounds[-1][1]
+        if derived.lane_bounds
+        else (derived.floor_x_min + params.radial_width - params.wall_thickness)
+    )
+    outer_y0 = -outer_len * 0.5
+    outer_guard = _box_min(
+        params.wall_thickness,
+        outer_len,
+        derived.wall_heights[-1],
+        outer_x0,
+        outer_y0,
+        params.floor_thickness,
+    )
+    wall_specs.append(
+        (
+            outer_x0,
+            outer_x0 + params.wall_thickness,
+            outer_y0,
+            outer_y0 + outer_len,
+            derived.wall_heights[-1],
+            "outer_guard",
+        )
+    )
+
+    shelf = floor + inner_guard + outer_guard
+    for i, (d0, d1) in enumerate(derived.divider_bounds):
+        wall_h = derived.wall_heights[min(i + 1, len(derived.wall_heights) - 1)]
+        wall_len = derived.wall_lengths[min(i + 1, len(derived.wall_lengths) - 1)]
+        wall_y0 = -wall_len * 0.5
+        shelf = shelf + _box_min(
+            d1 - d0,
+            wall_len,
+            wall_h,
+            d0,
+            wall_y0,
+            params.floor_thickness,
+        )
+        wall_specs.append((d0, d1, wall_y0, wall_y0 + wall_len, wall_h, "divider"))
+
+    if params.show_wall_print_sweeps:
+        z_floor = params.floor_thickness
+        for x0, x1, y0, y1, wall_h, kind in wall_specs:
+            if wall_h <= 0.6:
+                continue
+            y_front_x0 = _tray_side_y_at_x(derived, x0, "front", params.wall_print_sweep_edge_inset)
+            y_front_x1 = _tray_side_y_at_x(derived, x1, "front", params.wall_print_sweep_edge_inset)
+            y_back_x0 = _tray_side_y_at_x(derived, x0, "back", params.wall_print_sweep_edge_inset)
+            y_back_x1 = _tray_side_y_at_x(derived, x1, "back", params.wall_print_sweep_edge_inset)
+            y_front_target = y_front_x0 if abs(y_front_x0) <= abs(y_front_x1) else y_front_x1
+            y_back_target = y_back_x0 if abs(y_back_x0) <= abs(y_back_x1) else y_back_x1
+
+            if params.wall_print_sweep_render_front_side:
+                buttress_front = _build_single_wall_side_buttress(
+                    x0=x0,
+                    x1=x1,
+                    y_wall_edge=y0,
+                    y_tray_side=y_front_target,
+                    z_floor=z_floor,
+                    z_top=z_floor + wall_h,
+                    use_arc=params.wall_print_sweep_circle_cut,
+                )
+                if buttress_front is not None:
+                    shelf = shelf + buttress_front
+
+            if params.wall_print_sweep_render_back_side:
+                buttress_back = _build_single_wall_side_buttress(
+                    x0=x0,
+                    x1=x1,
+                    y_wall_edge=y1,
+                    y_tray_side=y_back_target,
+                    z_floor=z_floor,
+                    z_top=z_floor + wall_h,
+                    use_arc=params.wall_print_sweep_circle_cut,
+                )
+                if buttress_back is not None:
+                    shelf = shelf + buttress_back
+
+    # Explicit additive root beads at wall/floor joints so fillets are visible.
+    bead_r = min(max(0.0, params.wall_floor_fillet_radius), max(0.2, params.wall_thickness * 0.9))
+    if bead_r > 0:
+        for x0, x1, y0, y1, _, kind in wall_specs:
+            y_span = y1 - y0
+            if y_span <= 0.4:
+                continue
+            y_mid = (y0 + y1) * 0.5
+            bead_len = y_span + 0.2
+
+            bead_left = Cylinder(bead_r, bead_len, align=(Align.CENTER, Align.CENTER, Align.CENTER))
+            bead_left = bead_left.rotate(Axis.X, 90.0).translate((x0, y_mid, params.floor_thickness))
+            clip_left = _box_min(
+                bead_r + 0.05,
+                bead_len + 0.1,
+                bead_r + 0.05,
+                x0 - bead_r - 0.02,
+                y0 - 0.05,
+                params.floor_thickness - 0.01,
+            )
+            shelf = shelf + bead_left.intersect(clip_left)
+
+            bead_right = Cylinder(bead_r, bead_len, align=(Align.CENTER, Align.CENTER, Align.CENTER))
+            bead_right = bead_right.rotate(Axis.X, 90.0).translate((x1, y_mid, params.floor_thickness))
+            clip_right = _box_min(
+                bead_r + 0.05,
+                bead_len + 0.1,
+                bead_r + 0.05,
+                x1 - 0.02,
+                y0 - 0.05,
+                params.floor_thickness - 0.01,
+            )
+            shelf = shelf + bead_right.intersect(clip_right)
+
+    # Soften exposed vertical corners.
+    shelf = _safe_fillet(
+        shelf,
+        list(shelf.edges().filter_by(Axis.Z)),
+        params.edge_fillet_radius,
+        "shelf_vertical_edges",
+    )
+
+    mask = _build_annular_sector_prism(
+        max(0.1, derived.inner_radius - 0.4),
+        derived.outer_radius + 0.4,
+        derived.shelf_a_start,
+        derived.shelf_a_end,
+        z0=derived.mask_z0,
+        height=derived.mask_height,
+        axis_r=derived.mount_wall_radius,
+    )
+    shelf = _coerce_single_shape(shelf, "shelf")
+    if mask is not None:
+        shelf = shelf.intersect(mask)
+    return _coerce_single_shape(shelf, "shelf_masked")
+
+
+def _build_mount_underside_blend(params: RibShelfParams, derived: Derived, shelf_bottom_z: float):
+    blend_r = max(0.0, params.mount_underside_fillet_radius)
+    if blend_r <= 0:
+        return None
+
+    # Keep blend inside the overlap region so it supports the joint without overgrowth.
+    blend_r = min(blend_r, max(0.2, params.mount_overlap - 0.35))
+    if blend_r <= 0.15:
+        return None
+
+    with BuildPart() as torus:
+        with BuildSketch(Plane.XZ):
+            with Locations((derived.inner_radius, shelf_bottom_z)):
+                Circle(blend_r)
+        revolve(axis=Axis.Z, revolution_arc=derived.sweep_angle_eff)
+    blend = torus.part
+
+    radial_lower_mask = _build_annular_sector_prism(
+        max(0.1, derived.inner_radius - 0.02),
+        derived.inner_radius + blend_r + 0.15,
+        0.0,
+        derived.sweep_angle_eff,
+        z0=shelf_bottom_z - blend_r - 0.2,
+        height=blend_r + 0.25,
+        axis_r=0.0,
+    )
+    if radial_lower_mask is not None:
+        blend = blend.intersect(radial_lower_mask)
+    return _coerce_single_shape(blend, "mount_underside_blend")
+
+
+def _rotate_about_y_at_x(part, angle_deg: float, pivot_x: float):
+    if abs(angle_deg) <= 1e-9:
+        return part
+    return part.translate((-pivot_x, 0.0, 0.0)).rotate(Axis.Y, angle_deg).translate((pivot_x, 0.0, 0.0))
+
+
+def build_assembly(params: RibShelfParams, profile: CClampProfile):
+    derived = derive(params, profile)
+    parts = []
+    clamp_pad = build_clamp_pad_sweep(params, profile, derived)
+    if clamp_pad is not None:
+        parts.append(clamp_pad)
+
+    if params.show_shelf:
+        shelf = build_shelf_linear(params, derived)
+        shelf = _rotate_about_y_at_x(shelf, -params.tilt_deg, derived.inner_radius - derived.mount_wall_radius)
+        z_embed = min(params.floor_thickness * 0.8, max(params.pad_overlap, params.mount_overlap * 0.35))
+        # Transform order matters:
+        # 1) shift shelf so its radial-center frame matches clamp center (origin),
+        # 2) then apply sweep-angle placement around that shared origin.
+        shelf = shelf.translate((derived.mount_wall_radius, 0.0, derived.holder_profile_y_sweep - z_embed))
+        shelf = shelf.rotate(Axis.Z, derived.attach_angle)
+        parts.append(shelf)
+
+    if not parts:
+        raise ValueError("All geometry sections are disabled; nothing to build.")
+
+    model = parts[0]
+    for piece in parts[1:]:
+        model = model + piece
+
+    # Explicit constructive underside blend where shelf meets clamp/pad.
+    if params.show_shelf and params.show_clamp:
+        z_embed = min(params.floor_thickness * 0.8, max(params.pad_overlap, params.mount_overlap * 0.35))
+        shelf_bottom_z = derived.holder_profile_y_sweep - z_embed
+        mount_blend = _build_mount_underside_blend(params, derived, shelf_bottom_z)
+        if mount_blend is not None:
+            model = model + mount_blend
+    model = _coerce_single_shape(model, "assembly")
+    return model, derived
+
+
+def print_checks(params: RibShelfParams, derived: Derived) -> None:
+    print(f"INFO: intended_mount_clock_position = {derived.intended_mount_clock_position}:00 (user at 6:00)")
+    print(f"INFO: material_profile = {params.material} (v2 target: PETG)")
+    print(f"INFO: slot_count = {params.slot_count}, lane_cluster_width = {derived.total_lane_cluster_width:.2f} mm")
+    print(
+        f"INFO: shelf arc = {params.arc_length:.2f} mm, radial width = {params.radial_width:.2f} mm, "
+        f"slot depth = {params.slot_depth:.2f} mm"
+    )
+    print(
+        f"INFO: sweep_angle_eff = {derived.sweep_angle_eff:.2f} deg (tray-driven), "
+        f"shelf_span = {derived.shelf_angle_deg:.2f} deg, mount_overlap = {params.mount_overlap:.2f} mm"
+    )
+    clamp_midline = derived.sweep_sign * derived.sweep_angle_eff * 0.5
+    print(
+        f"INFO: sweep_midline_alignment_deg clamp={clamp_midline:.2f}, "
+        f"holders={derived.attach_angle:.2f}"
+    )
+    print(
+        f"INFO: wall_height_gradient_inner_to_outer = "
+        f"{derived.wall_heights[0]:.1f} -> {derived.wall_heights[-1]:.1f} mm"
+    )
+    print(
+        f"INFO: wall_length_gradient_inner_to_outer = "
+        f"{derived.wall_lengths[0]:.1f} -> {derived.wall_lengths[-1]:.1f} mm"
+    )
+    print(
+        f"INFO: wall_root_fillet_mode = additive_bead, radius = {min(max(0.0, params.wall_floor_fillet_radius), max(0.2, params.wall_thickness * 0.9)):.2f} mm"
+    )
+    print(
+        f"INFO: mount_underside_blend_mode = constructive_swept, radius = {max(0.0, min(params.mount_underside_fillet_radius, max(0.2, params.mount_overlap - 0.35))):.2f} mm"
+    )
+    print(
+        f"INFO: wall_print_sweeps = {params.show_wall_print_sweeps}, "
+        f"one_per_wall = True, thickness = wall_thickness ({params.wall_thickness:.2f} mm), "
+        f"circle_cut = {params.wall_print_sweep_circle_cut}, "
+        f"edge_inset = {params.wall_print_sweep_edge_inset:.2f} mm, "
+        f"front_side = {params.wall_print_sweep_render_front_side}, "
+        f"back_side = {params.wall_print_sweep_render_back_side}"
+    )
+    lane_widths = [right - left for (left, right) in derived.lane_bounds]
+    lane_widths_text = ", ".join(f"{width:.2f}" for width in lane_widths)
+    print(f"INFO: lane_clear_widths_mm = [{lane_widths_text}]")
+    if len(derived.lane_centers) > 1:
+        center_pitches = [
+            derived.lane_centers[i + 1] - derived.lane_centers[i]
+            for i in range(len(derived.lane_centers) - 1)
+        ]
+        pitch_text = ", ".join(f"{pitch:.2f}" for pitch in center_pitches)
+        print(f"INFO: lane_center_pitches_mm = [{pitch_text}]")
+
+    nozzle_min_wall = params.min_wall_for_nozzle_multiplier * NOZZLE_DIAMETER_MM
+    if params.wall_thickness < nozzle_min_wall:
+        print(
+            "WARNING: wall_thickness may be too thin for a 0.4 mm nozzle "
+            f"({params.wall_thickness:.2f} < {nozzle_min_wall:.2f} mm)."
+        )
+    if params.floor_thickness < params.min_floor_recommended:
+        print("WARNING: floor_thickness is thin for repeated wet use.")
+    if params.inner_wall_length > params.slot_depth or params.outer_wall_length > params.slot_depth:
+        print(
+            "WARNING: wall length targets exceed slot depth and are being clipped "
+            f"to {params.slot_depth:.2f} mm."
+        )
+
+    if len(params.slot_widths) != params.slot_count:
+        print("WARNING: slot_count and PRIMARY_SLOT_WIDTHS_MM length mismatch; widths are being normalized.")
+
+    # Guardrail: slot overlap / invalid lane ordering.
+    for i in range(len(derived.lane_bounds) - 1):
+        right_i = derived.lane_bounds[i][1]
+        left_next = derived.lane_bounds[i + 1][0]
+        if right_i >= left_next:
+            print(f"WARNING: slot overlap detected between lanes {i + 1} and {i + 2}.")
+
+    # Guardrail: impossible pitch relative to lane widths/walls.
+    widths = list(params.slot_widths)[: params.slot_count]
+    if len(widths) < params.slot_count and widths:
+        widths.extend([widths[-1]] * (params.slot_count - len(widths)))
+    for i in range(max(0, params.slot_count - 1)):
+        if i + 1 >= len(widths):
+            break
+        min_center_span = widths[i] * 0.5 + params.wall_thickness + widths[i + 1] * 0.5
+        if params.slot_pitch + 1e-6 < min_center_span:
+            print(
+                "WARNING: requested slot_pitch is impossible for current adjacent lane widths/wall thickness "
+                f"(pair {i + 1}-{i + 2}, needs >= {min_center_span:.2f} mm)."
+            )
+    if len(derived.lane_centers) > 1:
+        center_pitches = [
+            derived.lane_centers[i + 1] - derived.lane_centers[i]
+            for i in range(len(derived.lane_centers) - 1)
+        ]
+        largest_pitch_delta = max(abs(pitch - params.slot_pitch) for pitch in center_pitches)
+        if largest_pitch_delta > 0.8:
+            print(
+                "INFO: actual lane center pitches are width-driven and differ from requested slot_pitch by up to "
+                f"{largest_pitch_delta:.2f} mm."
+            )
+
+    if derived.total_lane_cluster_width > params.radial_width + 1e-6:
+        print("WARNING: slot layout exceeds radial width; reduce widths, pitch, or wall thickness.")
+
+    # Guardrail: impossible pitch/count against arc length (access staging sanity check).
+    pitch_span = max(0, params.slot_count - 1) * params.slot_pitch
+    if pitch_span > params.arc_length + 1e-6:
+        print("WARNING: slot count/pitch exceeds available arc length envelope.")
+
+    # Guardrail: trapped water pockets.
+    if params.slot_depth > params.arc_length - params.wall_thickness * 2.0:
+        print("WARNING: slot_depth is near full shelf span; rinse-out access may be reduced.")
+    if derived.slot_y_back > params.arc_length * 0.5:
+        print("WARNING: slot depth pushes beyond shelf span; likely invalid/wet pocket geometry.")
+
+    if params.radial_width > params.max_projection:
+        print("WARNING: projection exceeds max_projection guideline.")
+    if derived.shelf_angle_deg > derived.sweep_angle_eff + 0.1:
+        print(
+            "WARNING: shelf arc span exceeds effective clamp sweep span; outboard ends are cantilevered "
+            f"({derived.shelf_angle_deg:.2f} deg > {derived.sweep_angle_eff:.2f} deg)."
+        )
+
+
+def print_geometry_summary(model) -> None:
+    model = _coerce_single_shape(model, "summary_model")
+    bb = model.bounding_box()
+    size = bb.size
+    print(
+        "SUMMARY: bbox_min=(%.2f, %.2f, %.2f) bbox_max=(%.2f, %.2f, %.2f) size=(%.2f, %.2f, %.2f) mm"
+        % (bb.min.X, bb.min.Y, bb.min.Z, bb.max.X, bb.max.Y, bb.max.Z, size.X, size.Y, size.Z)
+    )
+    print(f"SUMMARY: CAD volume estimate = {model.volume / 1000.0:.2f} ml")
+
+
+def preview_part(part) -> None:
+    try:
+        from ocp_vscode import show
+    except ImportError as exc:
+        print(
+            "Missing dependency: ocp_vscode. Install with:\n"
+            "  python3.13 -m pip install -r cad/build123d/requirements.txt",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from exc
+    show(part)
+    print("Preview sent to OCP CAD Viewer.")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="build123d rib shelf vertical v1.")
+    parser.add_argument(
+        "--output",
+        "-o",
+        default=str(DEFAULT_OUTPUT),
+        help=f"Output STL path (default: {DEFAULT_OUTPUT})",
+    )
+    default_preview = len(sys.argv) == 1
+    parser.add_argument(
+        "--preview",
+        action="store_true",
+        default=default_preview,
+        help="Show preview and skip STL export unless --export is also set",
+    )
+    parser.add_argument(
+        "--export",
+        action="store_true",
+        help="When used with --preview, also export STL",
+    )
+    return parser.parse_args()
+
+
+def runtime_from_args(args: argparse.Namespace) -> RuntimeOptions:
+    return RuntimeOptions(output=Path(args.output), preview=args.preview, export=args.export)
+
+
+def runtime_from_head_config() -> RuntimeOptions:
+    return RuntimeOptions(output=Path(HEAD_OUTPUT), preview=HEAD_PREVIEW, export=HEAD_EXPORT)
+
+
+def main() -> int:
+    run = runtime_from_head_config() if USE_HEAD_CONFIG else runtime_from_args(parse_args())
+    params = RibShelfParams()
+    profile = load_c_clamp_profile()
+    profile = stretch_profile_from_back_wall_mid(profile, params.clamp_back_wall_stretch)
+
+    model, derived = build_assembly(params, profile)
+    print_checks(params, derived)
+    print_geometry_summary(model)
+
+    if run.preview:
+        preview_part(model)
+        if not run.export:
+            print("Preview-only mode: STL export skipped.")
+            return 0
+
+    out_path = run.output
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    export_stl(model, str(out_path), tolerance=0.0005, angular_tolerance=0.03)
+    print(f"Exported: {out_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -5,6 +5,7 @@
 
 ## Files
 - `costco_cup_holder_v1.scad`
+- `cad/build123d/attachments/costco_cup_holder/v1/costco_cup_holder_v1.py`
 - `notes.md`
 
 ## Geometry Proposal (Before Implementation)
@@ -62,9 +63,13 @@
 ## Export Workflow
 - Full model STL: `make cup_holder`
 - Holder-only sample STL: `make cup_holder` (same target exports both)
+- build123d full STL: `make PYTHON_B123D=.venv-b123d/bin/python cup_holder_b123d`
+- build123d holder-only STL: `make PYTHON_B123D=.venv-b123d/bin/python cup_holder_b123d_holder_only`
 - Outputs:
   - `build/costco_cup_holder_v1.stl`
   - `build/costco_cup_holder_v1_holder_sample.stl`
+  - `build/costco_cup_holder_v1_b123d.stl`
+  - `build/costco_cup_holder_v1_b123d_holder_only.stl`
 
 ## Fit/Test Log
 - Date: 2026-02-04

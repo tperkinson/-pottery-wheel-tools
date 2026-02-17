@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="760" viewBox="0 0 1100 760">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#222"/>
+    </marker>
+    <style>
+      .title { font: 700 34px sans-serif; fill:#111; }
+      .txt { font: 500 20px sans-serif; fill:#222; }
+      .small { font: 500 17px sans-serif; fill:#333; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1100" height="760" fill="#fff"/>
+  <text x="550" y="52" text-anchor="middle" class="title">Intended Corner Shape (Close-Up)</text>
+
+  <!-- floor -->
+  <polygon points="170,590 540,590 690,500 320,500" fill="#d9f2d2" stroke="#2f6f2f" stroke-width="4"/>
+  <!-- wall A -->
+  <polygon points="320,500 690,500 690,200 320,200" fill="#cae9c1" stroke="#2f6f2f" stroke-width="4"/>
+  <!-- wall B -->
+  <polygon points="170,590 320,500 320,200 170,290" fill="#bde0b4" stroke="#2f6f2f" stroke-width="4"/>
+
+  <!-- three blended edge lines -->
+  <path d="M 320 500 Q 390 500 420 460" fill="none" stroke="#1f7a1f" stroke-width="12"/>
+  <path d="M 320 500 Q 280 460 272 400" fill="none" stroke="#1f7a1f" stroke-width="12"/>
+  <path d="M 320 500 Q 275 532 230 560" fill="none" stroke="#1f7a1f" stroke-width="12"/>
+
+  <!-- central tri-corner patch -->
+  <path d="M 308 487 C 350 470, 378 435, 365 392 C 333 405, 300 437, 285 472 Z"
+        fill="#94cf86" stroke="#1f7a1f" stroke-width="4"/>
+
+  <line x1="820" y1="190" x2="365" y2="430" stroke="#222" stroke-width="2.8" marker-end="url(#arrow)"/>
+  <text x="828" y="182" class="txt">Smooth tri-corner patch</text>
+  <text x="828" y="208" class="small">(no sharp point)</text>
+
+  <line x1="820" y1="290" x2="420" y2="470" stroke="#222" stroke-width="2.8" marker-end="url(#arrow)"/>
+  <text x="828" y="282" class="txt">Blend on wall-wall seam</text>
+
+  <line x1="820" y1="390" x2="272" y2="415" stroke="#222" stroke-width="2.8" marker-end="url(#arrow)"/>
+  <text x="828" y="382" class="txt">Blend on wall-base seam</text>
+
+  <line x1="820" y1="490" x2="235" y2="557" stroke="#222" stroke-width="2.8" marker-end="url(#arrow)"/>
+  <text x="828" y="482" class="txt">Blend continues to floor edge</text>
+
+  <text x="550" y="716" text-anchor="middle" class="txt">Use this same corner treatment at all 4 interior corners.</text>
+</svg>

@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="820" viewBox="0 0 1400 820">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#222"/>
+    </marker>
+    <style>
+      .title { font: 700 32px sans-serif; fill: #111; }
+      .panelTitle { font: 700 24px sans-serif; fill: #1a1a1a; }
+      .label { font: 500 18px sans-serif; fill: #0a3b7a; }
+      .note { font: 500 17px sans-serif; fill: #222; }
+      .small { font: 500 15px sans-serif; fill: #333; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1400" height="820" fill="#ffffff"/>
+  <text x="700" y="45" text-anchor="middle" class="title">Interpretation Of Your Desired Shape</text>
+
+  <!-- Left panel -->
+  <g transform="translate(40,90)">
+    <rect x="0" y="0" width="640" height="690" rx="18" fill="#f7fbff" stroke="#d5e7f7"/>
+    <text x="320" y="40" text-anchor="middle" class="panelTitle">Top View (Open Basin)</text>
+
+    <!-- Outer annular sector -->
+    <path d="M 138 473 A 285 285 0 0 1 138 217 L 258 275 A 152 152 0 0 0 258 415 Z"
+          fill="#cae8ff" stroke="#0a3b7a" stroke-width="5"/>
+
+    <!-- Inner cavity ring -->
+    <path d="M 155 458 A 260 260 0 0 1 155 232 L 242 278 A 162 162 0 0 0 242 412 Z"
+          fill="#ffffff" stroke="#2a74c6" stroke-width="4"/>
+
+    <!-- Side wall rays emphasized -->
+    <line x1="138" y1="473" x2="258" y2="415" stroke="#0a3b7a" stroke-width="7"/>
+    <line x1="138" y1="217" x2="258" y2="275" stroke="#0a3b7a" stroke-width="7"/>
+
+    <text x="260" y="175" class="label">Back wall = radial arc</text>
+    <text x="230" y="500" class="label">Front (clamp) wall = radial arc</text>
+
+    <text x="18" y="210" class="small">Side wall on</text>
+    <text x="18" y="230" class="small">sweep end ray</text>
+
+    <text x="20" y="505" class="small">Side wall on</text>
+    <text x="20" y="525" class="small">sweep end ray</text>
+
+    <text x="360" y="350" class="note">Open top</text>
+    <text x="345" y="373" class="note">water cavity</text>
+
+    <line x1="465" y1="240" x2="420" y2="295" stroke="#222" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <line x1="465" y1="240" x2="390" y2="295" stroke="#222" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <text x="472" y="225" class="small">Uniform wall thickness</text>
+  </g>
+
+  <!-- Right panel -->
+  <g transform="translate(720,90)">
+    <rect x="0" y="0" width="640" height="690" rx="18" fill="#fbfff7" stroke="#dff0d6"/>
+    <text x="320" y="40" text-anchor="middle" class="panelTitle">Section (Wall To Floor)</text>
+
+    <!-- Body with rounded inside and outside floor corners -->
+    <path d="M 110 615
+             L 470 615
+             L 470 180
+             L 395 180
+             L 395 465
+             A 55 55 0 0 1 340 520
+             L 230 520
+             A 55 55 0 0 1 175 575
+             L 175 615
+             Z"
+          fill="#daf5cf" stroke="#1f7a1f" stroke-width="5"/>
+
+    <!-- Exterior base fillet hint -->
+    <path d="M 110 615 Q 110 560 165 560" fill="none" stroke="#1f7a1f" stroke-width="8"/>
+
+    <line x1="555" y1="260" x2="430" y2="260" stroke="#222" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <line x1="555" y1="260" x2="360" y2="260" stroke="#222" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <text x="560" y="250" class="small">Uniform wall thickness</text>
+
+    <line x1="535" y1="455" x2="365" y2="495" stroke="#222" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <text x="540" y="448" class="small">Inside corner fillet</text>
+    <text x="540" y="468" class="small">(easy to clean)</text>
+
+    <line x1="535" y1="610" x2="145" y2="590" stroke="#222" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <text x="540" y="603" class="small">Outside base fillet</text>
+    <text x="540" y="623" class="small">(no sharp 90° edge)</text>
+
+    <text x="285" y="145" class="note">No sharp interior or exterior seams</text>
+  </g>
+</svg>

@@ -38,6 +38,7 @@ holder_shelf_thickness = 4;
 holder_stop_thickness = 3;
 pad_overlap = 1.0;           // overlap pad into clamp
 pad_offset_y = 0;            // keep 0 to preserve top anchor at Y=0
+join_eps = 0.05;             // tiny overlap to avoid non-manifold unions
 
 holder_tilt_stilt_enable = true;
 holder_tilt_stilt_only_when_tilted = true;
@@ -151,8 +152,8 @@ module holder_linear() {
             cube([holder_back_thickness, holder_width, holder_back_height], center = false);
 
         // Bottom shelf on pad plane (Z=0).
-        translate([0, -holder_width / 2, 0])
-            cube([holder_shelf_depth, holder_width, holder_shelf_thickness], center = false);
+        translate([0, -holder_width / 2, -join_eps])
+            cube([holder_shelf_depth, holder_width, holder_shelf_thickness + join_eps], center = false);
 
         // Front stop wall.
         if (holder_stop_height > 0 && holder_stop_thickness > 0) {

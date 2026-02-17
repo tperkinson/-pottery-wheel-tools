@@ -18,6 +18,8 @@ This repo is organized as a reusable mount-platform project with versioned asset
 - A `Makefile` is provided for consistent STL exports to `build/`.
 - Run `make help` to list available targets.
 - Run `make check` for fast geometry compile checks.
+- Initial build123d migration notes and commands:
+  - `cad/build123d/README.md`
 
 ## Start New Attachment
 - Scaffold a new attachment:

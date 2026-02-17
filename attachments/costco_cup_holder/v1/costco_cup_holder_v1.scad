@@ -37,7 +37,7 @@ ring_height = 5; // use 14 for final, 5 just to check;                 // vertic
 // Holder placement
 attach_angle = sweep_angle / 2;   // used when attach_angle_mode = "manual"
 attach_angle_mode = "auto_center"; // "auto_center" or "manual"
-holder_radial_location_on_pad = pad_length * 0.05;
+holder_radial_location_on_pad = pad_length * 0.25;
 holder_top_offset = 0;
 holder_tilt_deg = 5;
 

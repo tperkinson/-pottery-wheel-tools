@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#222"/>
+    </marker>
+    <style>
+      .title { font: 700 34px sans-serif; fill: #111; }
+      .panel { fill:#fbfbfb; stroke:#ddd; }
+      .h2 { font: 700 24px sans-serif; fill:#1b1b1b; }
+      .txt { font: 500 18px sans-serif; fill:#222; }
+      .small { font: 500 16px sans-serif; fill:#333; }
+      .ok { fill:#1b7a1b; }
+      .bad { fill:#b32d2d; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1400" height="900" fill="#fff"/>
+  <text x="700" y="50" text-anchor="middle" class="title">3-Wall Corner Intent (One Corner, Repeated 4 Times)</text>
+
+  <!-- LEFT: what to avoid -->
+  <g transform="translate(40,95)">
+    <rect class="panel" x="0" y="0" width="640" height="760" rx="16"/>
+    <text x="320" y="42" text-anchor="middle" class="h2">Avoid: Sharp Tri-Corner</text>
+
+    <!-- floor -->
+    <polygon points="110,620 430,620 560,540 240,540" fill="#f2dede" stroke="#9b5a5a" stroke-width="3"/>
+    <!-- wall A -->
+    <polygon points="240,540 560,540 560,260 240,260" fill="#f5caca" stroke="#9b5a5a" stroke-width="3"/>
+    <!-- wall B -->
+    <polygon points="110,620 240,540 240,260 110,340" fill="#f0bebe" stroke="#9b5a5a" stroke-width="3"/>
+
+    <!-- hard line emphasis -->
+    <line x1="240" y1="540" x2="240" y2="260" stroke="#8a1f1f" stroke-width="7"/>
+    <line x1="240" y1="540" x2="560" y2="540" stroke="#8a1f1f" stroke-width="7"/>
+    <line x1="110" y1="620" x2="240" y2="540" stroke="#8a1f1f" stroke-width="7"/>
+
+    <line x1="450" y1="180" x2="260" y2="500" stroke="#222" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <text x="455" y="170" class="small">Hard edge traps residue and feels sharp</text>
+  </g>
+
+  <!-- RIGHT: intended -->
+  <g transform="translate(720,95)">
+    <rect class="panel" x="0" y="0" width="640" height="760" rx="16"/>
+    <text x="320" y="42" text-anchor="middle" class="h2">Intended: Smooth Tri-Corner Blend</text>
+
+    <!-- floor -->
+    <polygon points="110,620 430,620 560,540 240,540" fill="#d7f0d0" stroke="#467a46" stroke-width="3"/>
+    <!-- wall A -->
+    <polygon points="240,540 560,540 560,260 240,260" fill="#c5e8be" stroke="#467a46" stroke-width="3"/>
+    <!-- wall B -->
+    <polygon points="110,620 240,540 240,260 110,340" fill="#b6dfae" stroke="#467a46" stroke-width="3"/>
+
+    <!-- rounded edge blends (three meeting edges) -->
+    <path d="M 240 540 Q 300 540 320 510" fill="none" stroke="#1b7a1b" stroke-width="8"/>
+    <path d="M 240 540 Q 210 510 205 460" fill="none" stroke="#1b7a1b" stroke-width="8"/>
+    <path d="M 240 540 Q 210 560 175 585" fill="none" stroke="#1b7a1b" stroke-width="8"/>
+
+    <!-- central tri-corner patch -->
+    <path d="M 232 528 C 260 520, 280 500, 270 472 C 252 480, 228 500, 214 520 Z"
+          fill="#8fcd83" stroke="#1b7a1b" stroke-width="3"/>
+
+    <line x1="430" y1="180" x2="250" y2="505" stroke="#222" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <text x="436" y="170" class="small">Continuous blend where 3 surfaces meet</text>
+
+    <line x1="520" y1="650" x2="275" y2="545" stroke="#222" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <text x="525" y="646" class="small">No sharp vertex at the corner node</text>
+  </g>
+
+  <text x="700" y="875" text-anchor="middle" class="txt">
+    Apply this same tri-corner blend at all 4 wall-to-wall-to-base corners (inside; and mirrored on outside if desired).
+  </text>
+</svg>

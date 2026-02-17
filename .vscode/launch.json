@@ -1,0 +1,40 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Stamp: Preview (OCP Viewer)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/cad/build123d/attachments/pottery_stamp/v8/pottery_stamp_tlp_v8.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "args": [
+        "--preview"
+      ]
+    },
+    {
+      "name": "Stamp: Preview + Export STL",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/cad/build123d/attachments/pottery_stamp/v8/pottery_stamp_tlp_v8.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "args": [
+        "--preview",
+        "--export"
+      ]
+    },
+    {
+      "name": "Stamp: Export STL Only",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/cad/build123d/attachments/pottery_stamp/v8/pottery_stamp_tlp_v8.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "args": [
+        "--output",
+        "${workspaceFolder}/build/pottery_stamp_tlp_v8_b123d.stl"
+      ]
+    }
+  ]
+}

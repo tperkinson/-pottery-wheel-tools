@@ -4,14 +4,13 @@
 - Native annular-sector basin (designed radial, not clipped from a box).
 - Two radial side walls define the span, with side 1 starting at `0 deg` when `match_side_walls_to_sweep=true`.
 - Front/close wall and back wall are both radial arcs.
-- Front-to-back top height transitions by a smooth radial profile (`smoothstep`) so there is no stepped front-side notch.
+- Top is flat/open and bottom is flat.
+- Side walls now have explicit angular thickness (`side_wall_angle_thickness_deg`) so they are not zero-thickness shells.
 - Large rounding is applied to:
   - plan seams (`plan_corner_round_radius`)
-  - front rim (`front_rim_round_radius`)
-  - back rim (`back_rim_round_radius`)
-  - side top seams (`side_top_round_radius`)
-  - front-side top corners (`front_side_corner_round_radius`)
-  - interior floor blend (`interior_floor_blend_radius`)
+  - top-edge rounds (`front_rim_round_radius`, `back_rim_round_radius`, `side_top_round_radius`, `front_side_corner_round_radius`)
+  - interior floor-to-wall seams and 3-way floor corners (`interior_floor_blend_radius`)
+  - exterior floor perimeter is mirrored with `exterior_floor_blend_adder_linear()` so inside/outside floor blends track each other
 
 ## Shared-wall implementation details
 - Mounting uses canonical clamp profile:
@@ -22,7 +21,7 @@
 
 ## Stability / reinforcement choices
 - PETG-oriented minimum structure defaults:
-  - `wall_thickness = 3.6`
+  - `wall_thickness = 4.8`
   - `floor_thickness = 4.5`
 - Side/top/front corner rounds were increased to remove sharp stress risers.
 - Smooth interior blend avoids debris traps and supports easier cleaning.
@@ -36,16 +35,23 @@
 - `radial_width = 135`
 - `depth = 72`
 - `back_wall_height = 72`
-- `front_wall_height = 64`
+- `front_wall_height = 72`
+- `wall_thickness = 4.8`
+- `plan_corner_round_radius = 8`
+- `interior_floor_blend_radius = 4.0`
+- `front_rim_round_radius = 0` (kept off by default for slicer robustness)
+- `back_rim_round_radius = 0` (kept off by default for slicer robustness)
+- `side_top_round_radius = 0` (kept off by default for slicer robustness)
+- `front_side_corner_round_radius = 0` (kept off by default for slicer robustness)
 - `holder_top_offset = 16`
 - `holder_radial_location_on_pad = 0`
 - `holder_tilt_deg = 2`
 - Derived default estimate:
-  - fill-line volume: `~958 ml`
-  - max volume: `~1087 ml`
+  - fill-line volume: `~984 ml`
+  - max volume: `~986 ml`
 
 ## Parameter tuning order
 1. Fit first: `holder_top_offset`, `holder_radial_location_on_pad`, `holder_tilt_deg`
 2. Capacity second: `radial_width`, `depth` / `back_wall_height`, `front_wall_height`
 3. Splash behavior third: `front_wall_height`, `back_wall_height`, `side_wall_sweep_margin_deg`
-4. Organic smoothing last: `plan_corner_round_radius`, `side_top_round_radius`, `front_side_corner_round_radius`, `front_rim_round_radius`, `back_rim_round_radius`
+4. Organic smoothing last: `plan_corner_round_radius`, `side_top_round_radius`, `front_side_corner_round_radius`, `front_rim_round_radius`, `back_rim_round_radius`, `interior_floor_blend_radius`

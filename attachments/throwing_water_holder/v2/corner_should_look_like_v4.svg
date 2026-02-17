@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="820" viewBox="0 0 1200 820">
+  <defs>
+    <style>
+      .t { font: 700 34px sans-serif; fill:#111; }
+      .s { font: 500 19px sans-serif; fill:#222; }
+      .sm { font: 500 16px sans-serif; fill:#333; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="820" fill="#fff"/>
+  <text x="600" y="54" text-anchor="middle" class="t">Single Corner Target (3-Surface Blend)</text>
+
+  <!-- Floor plane -->
+  <polygon points="210,640 710,640 860,560 360,560"
+           fill="#d8f3cf" stroke="#2f6e2f" stroke-width="4"/>
+
+  <!-- Wall A -->
+  <polygon points="360,560 860,560 860,210 360,210"
+           fill="#c7eabf" stroke="#2f6e2f" stroke-width="4"/>
+
+  <!-- Wall B -->
+  <polygon points="210,640 360,560 360,210 210,290"
+           fill="#b8dfb0" stroke="#2f6e2f" stroke-width="4"/>
+
+  <!-- Seam blends (thick curves) -->
+  <path d="M 360 560 Q 430 560 465 515" fill="none" stroke="#1f7a1f" stroke-width="14" stroke-linecap="round"/>
+  <path d="M 360 560 Q 315 515 305 445" fill="none" stroke="#1f7a1f" stroke-width="14" stroke-linecap="round"/>
+  <path d="M 360 560 Q 305 600 255 628" fill="none" stroke="#1f7a1f" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- Tri-corner patch (smooth saddle-ish cap) -->
+  <path d="M 346 545
+           C 390 530, 430 495, 420 430
+           C 365 445, 330 485, 318 530
+           Z"
+        fill="#95cf87" stroke="#1f7a1f" stroke-width="4"/>
+
+  <!-- Minimal labels -->
+  <text x="890" y="255" class="s">Wall 1</text>
+  <text x="150" y="305" class="s">Wall 2</text>
+  <text x="740" y="700" class="s">Base</text>
+
+  <text x="760" y="420" class="s">No sharp point where</text>
+  <text x="760" y="446" class="s">the 3 surfaces meet</text>
+
+  <text x="600" y="780" text-anchor="middle" class="sm">This same corner treatment repeats at all four inside base corners.</text>
+</svg>
