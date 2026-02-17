@@ -157,9 +157,12 @@ class RibShelfParams:
     # -------------------------------
     edge_fillet_radius: float = 0.9
     wall_floor_fillet_radius: float = 2.0
+    slot_floor_scallop_max_radius: float = 3.0
+    slot_floor_scallop_width_extra: float = 1.0
     mount_underside_fillet_radius: float = 1.2
     show_wall_print_sweeps: bool = True
-    wall_print_sweep_circle_cut: bool = False
+    wall_print_sweep_circle_cut: bool = True
+    wall_print_scallop_cut_x_bleed: float = 0.2
     wall_print_sweep_render_front_side: bool = True
     wall_print_sweep_render_back_side: bool = False
     wall_print_sweep_edge_inset: float = 0.35
@@ -372,6 +375,7 @@ def _build_single_wall_side_buttress(
     z_floor: float,
     z_top: float,
     use_arc: bool,
+    arc_fallback_to_straight: bool = True,
 ):
     x_span = x1 - x0
     y_span = abs(y_tray_side - y_wall_edge)
@@ -403,8 +407,117 @@ def _build_single_wall_side_buttress(
         try:
             return _make(True)
         except Exception:
-            pass
+            if not arc_fallback_to_straight:
+                return None
     return _make(False)
+
+
+def _build_wall_side_buttress_scallop_cutter(
+    x0: float,
+    x1: float,
+    y_wall_edge: float,
+    y_tray_side: float,
+    z_floor: float,
+    z_top: float,
+    x_bleed_left: float = 0.0,
+    x_bleed_right: float = 0.0,
+):
+    bleed_left = max(0.0, x_bleed_left)
+    bleed_right = max(0.0, x_bleed_right)
+    x0_cut = x0 - bleed_left
+    x1_cut = x1 + bleed_right
+    straight = _build_single_wall_side_buttress(
+        x0=x0_cut,
+        x1=x1_cut,
+        y_wall_edge=y_wall_edge,
+        y_tray_side=y_tray_side,
+        z_floor=z_floor,
+        z_top=z_top,
+        use_arc=False,
+    )
+    if straight is None:
+        return None
+
+    curved = _build_single_wall_side_buttress(
+        x0=x0_cut,
+        x1=x1_cut,
+        y_wall_edge=y_wall_edge,
+        y_tray_side=y_tray_side,
+        z_floor=z_floor,
+        z_top=z_top,
+        use_arc=True,
+        arc_fallback_to_straight=False,
+    )
+    if curved is None:
+        return None
+    return _coerce_single_shape(straight - curved, "wall_side_buttress_scallop_cutter")
+
+
+def _build_slot_floor_scallop_strip(
+    left_wall: tuple[float, float, float, float, float, str],
+    right_wall: tuple[float, float, float, float, float, str],
+    side: str,
+    params: RibShelfParams,
+    derived: Derived,
+):
+    left_x1 = left_wall[1]
+    right_x0 = right_wall[0]
+    slot_clear = right_x0 - left_x1
+    if slot_clear <= 0.2:
+        return None
+
+    radius = min(max(0.0, params.slot_floor_scallop_max_radius), slot_clear * 0.5)
+    if radius <= 0.15:
+        return None
+
+    x_mid = (left_x1 + right_x0) * 0.5
+    y_side = _tray_side_y_at_x(derived, x_mid, side, params.wall_print_sweep_edge_inset)
+    left_y0, left_y1 = left_wall[2], left_wall[3]
+    right_y0, right_y1 = right_wall[2], right_wall[3]
+
+    if side == "front":
+        y_start = min(left_y1, right_y1)
+    else:
+        y_start = max(left_y0, right_y0)
+
+    y0 = min(y_start, y_side)
+    y1 = max(y_start, y_side)
+    y_span = y1 - y0
+    if y_span <= 0.2:
+        return None
+
+    y_mid = (y0 + y1) * 0.5
+    cutter_len = y_span + 0.3
+    z_base = params.floor_thickness
+    z_center = z_base + radius
+
+    # Two slot-local strips (one from each wall), each width == radius.
+    # They naturally merge when slot_clear <= 2*radius (e.g. <= 6 mm at max radius 3 mm).
+    left_strip = _box_min(
+        radius,
+        y_span,
+        radius,
+        left_x1,
+        y0,
+        z_base,
+    )
+    left_cutter = Cylinder(radius, cutter_len, align=(Align.CENTER, Align.CENTER, Align.CENTER))
+    left_cutter = left_cutter.rotate(Axis.X, 90.0).translate((left_x1 + radius, y_mid, z_center))
+    left_strip = _coerce_single_shape(left_strip - left_cutter, f"slot_floor_scallop_left_{side}")
+
+    right_strip = _box_min(
+        radius,
+        y_span,
+        radius,
+        right_x0 - radius,
+        y0,
+        z_base,
+    )
+    right_cutter = Cylinder(radius, cutter_len, align=(Align.CENTER, Align.CENTER, Align.CENTER))
+    right_cutter = right_cutter.rotate(Axis.X, 90.0).translate((right_x0 - radius, y_mid, z_center))
+    right_strip = _coerce_single_shape(right_strip - right_cutter, f"slot_floor_scallop_right_{side}")
+
+    return _coerce_single_shape(left_strip + right_strip, f"slot_floor_scallop_strip_{side}")
 
 
 def _tray_side_y_at_x(derived: Derived, x_local: float, side: str, edge_inset: float = 0.0) -> float:
@@ -677,9 +790,24 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
         )
         wall_specs.append((d0, d1, wall_y0, wall_y0 + wall_len, wall_h, "divider"))
 
+    walls_sorted = sorted(wall_specs, key=lambda w: w[0])
+
+    def _slot_radius_from_clear(slot_clear: float) -> float:
+        return min(max(0.0, params.slot_floor_scallop_max_radius), max(0.0, slot_clear) * 0.5)
+
+    cut_margin = max(0.0, params.wall_print_scallop_cut_x_bleed)
+    wall_cut_bleeds: dict[tuple[float, float, float, float], tuple[float, float]] = {}
+    for idx, (wx0, wx1, wy0, wy1, _, _) in enumerate(walls_sorted):
+        left_slot_clear = 0.0 if idx == 0 else (wx0 - walls_sorted[idx - 1][1])
+        right_slot_clear = 0.0 if idx == len(walls_sorted) - 1 else (walls_sorted[idx + 1][0] - wx1)
+        left_bleed = _slot_radius_from_clear(left_slot_clear) + cut_margin
+        right_bleed = _slot_radius_from_clear(right_slot_clear) + cut_margin
+        wall_cut_bleeds[(wx0, wx1, wy0, wy1)] = (left_bleed, right_bleed)
+
+    buttress_scallop_cutters = []
     if params.show_wall_print_sweeps:
         z_floor = params.floor_thickness
-        for x0, x1, y0, y1, wall_h, kind in wall_specs:
+        for x0, x1, y0, y1, wall_h, kind in walls_sorted:
             if wall_h <= 0.6:
                 continue
             y_front_x0 = _tray_side_y_at_x(derived, x0, "front", params.wall_print_sweep_edge_inset)
@@ -688,6 +816,7 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
             y_back_x1 = _tray_side_y_at_x(derived, x1, "back", params.wall_print_sweep_edge_inset)
             y_front_target = y_front_x0 if abs(y_front_x0) <= abs(y_front_x1) else y_front_x1
             y_back_target = y_back_x0 if abs(y_back_x0) <= abs(y_back_x1) else y_back_x1
+            x_bleed_left, x_bleed_right = wall_cut_bleeds.get((x0, x1, y0, y1), (cut_margin, cut_margin))
 
             if params.wall_print_sweep_render_front_side:
                 buttress_front = _build_single_wall_side_buttress(
@@ -697,10 +826,23 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
                     y_tray_side=y_front_target,
                     z_floor=z_floor,
                     z_top=z_floor + wall_h,
-                    use_arc=params.wall_print_sweep_circle_cut,
+                    use_arc=False,
                 )
                 if buttress_front is not None:
                     shelf = shelf + buttress_front
+                if params.wall_print_sweep_circle_cut:
+                    cutter_front = _build_wall_side_buttress_scallop_cutter(
+                        x0=x0,
+                        x1=x1,
+                        y_wall_edge=y0,
+                        y_tray_side=y_front_target,
+                        z_floor=z_floor,
+                        z_top=z_floor + wall_h,
+                        x_bleed_left=x_bleed_left,
+                        x_bleed_right=x_bleed_right,
+                    )
+                    if cutter_front is not None:
+                        buttress_scallop_cutters.append(cutter_front)
 
             if params.wall_print_sweep_render_back_side:
                 buttress_back = _build_single_wall_side_buttress(
@@ -710,44 +852,48 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
                     y_tray_side=y_back_target,
                     z_floor=z_floor,
                     z_top=z_floor + wall_h,
-                    use_arc=params.wall_print_sweep_circle_cut,
+                    use_arc=False,
                 )
                 if buttress_back is not None:
                     shelf = shelf + buttress_back
+                if params.wall_print_sweep_circle_cut:
+                    cutter_back = _build_wall_side_buttress_scallop_cutter(
+                        x0=x0,
+                        x1=x1,
+                        y_wall_edge=y1,
+                        y_tray_side=y_back_target,
+                        z_floor=z_floor,
+                        z_top=z_floor + wall_h,
+                        x_bleed_left=x_bleed_left,
+                        x_bleed_right=x_bleed_right,
+                    )
+                    if cutter_back is not None:
+                        buttress_scallop_cutters.append(cutter_back)
 
-    # Explicit additive root beads at wall/floor joints so fillets are visible.
-    bead_r = min(max(0.0, params.wall_floor_fillet_radius), max(0.2, params.wall_thickness * 0.9))
-    if bead_r > 0:
-        for x0, x1, y0, y1, _, kind in wall_specs:
-            y_span = y1 - y0
-            if y_span <= 0.4:
-                continue
-            y_mid = (y0 + y1) * 0.5
-            bead_len = y_span + 0.2
+    # Slot-driven wall/floor scallops:
+    # radius = min(slot_floor_scallop_max_radius, 0.5 * slot_clearance)
+    support_sides = []
+    if params.wall_print_sweep_render_front_side:
+        support_sides.append("front")
+    if params.wall_print_sweep_render_back_side:
+        support_sides.append("back")
+    if params.slot_floor_scallop_max_radius > 0 and support_sides:
+        for side in support_sides:
+            for idx in range(len(walls_sorted) - 1):
+                strip = _build_slot_floor_scallop_strip(
+                    left_wall=walls_sorted[idx],
+                    right_wall=walls_sorted[idx + 1],
+                    side=side,
+                    params=params,
+                    derived=derived,
+                )
+                if strip is not None:
+                    shelf = shelf + strip
 
-            bead_left = Cylinder(bead_r, bead_len, align=(Align.CENTER, Align.CENTER, Align.CENTER))
-            bead_left = bead_left.rotate(Axis.X, 90.0).translate((x0, y_mid, params.floor_thickness))
-            clip_left = _box_min(
-                bead_r + 0.05,
-                bead_len + 0.1,
-                bead_r + 0.05,
-                x0 - bead_r - 0.02,
-                y0 - 0.05,
-                params.floor_thickness - 0.01,
-            )
-            shelf = shelf + bead_left.intersect(clip_left)
-
-            bead_right = Cylinder(bead_r, bead_len, align=(Align.CENTER, Align.CENTER, Align.CENTER))
-            bead_right = bead_right.rotate(Axis.X, 90.0).translate((x1, y_mid, params.floor_thickness))
-            clip_right = _box_min(
-                bead_r + 0.05,
-                bead_len + 0.1,
-                bead_r + 0.05,
-                x1 - 0.02,
-                y0 - 0.05,
-                params.floor_thickness - 0.01,
-            )
-            shelf = shelf + bead_right.intersect(clip_right)
+    # Apply support scallop cuts after slot-floor fillets so the buttress cut profiles carry through.
+    if params.wall_print_sweep_circle_cut and buttress_scallop_cutters:
+        for idx, cutter in enumerate(buttress_scallop_cutters):
+            shelf = _coerce_single_shape(shelf - cutter, f"shelf_after_buttress_scallop_{idx}")
 
     # Soften exposed vertical corners.
     shelf = _safe_fillet(
@@ -871,7 +1017,10 @@ def print_checks(params: RibShelfParams, derived: Derived) -> None:
         f"{derived.wall_lengths[0]:.1f} -> {derived.wall_lengths[-1]:.1f} mm"
     )
     print(
-        f"INFO: wall_root_fillet_mode = additive_bead, radius = {min(max(0.0, params.wall_floor_fillet_radius), max(0.2, params.wall_thickness * 0.9)):.2f} mm"
+        f"INFO: wall_root_fillet_mode = slot_scallop_strip, "
+        f"legacy_wall_floor_radius = {params.wall_floor_fillet_radius:.2f} mm, "
+        f"slot_scallop_max_radius = {params.slot_floor_scallop_max_radius:.2f} mm, "
+        f"slot_scallop_width_extra = {params.slot_floor_scallop_width_extra:.2f} mm (unused in current mode)"
     )
     print(
         f"INFO: mount_underside_blend_mode = constructive_swept, radius = {max(0.0, min(params.mount_underside_fillet_radius, max(0.2, params.mount_overlap - 0.35))):.2f} mm"
@@ -880,6 +1029,7 @@ def print_checks(params: RibShelfParams, derived: Derived) -> None:
         f"INFO: wall_print_sweeps = {params.show_wall_print_sweeps}, "
         f"one_per_wall = True, thickness = wall_thickness ({params.wall_thickness:.2f} mm), "
         f"circle_cut = {params.wall_print_sweep_circle_cut}, "
+        f"scallop_cut_x_bleed = auto_from_adjacent_slot_radii + {params.wall_print_scallop_cut_x_bleed:.2f} mm margin, "
         f"edge_inset = {params.wall_print_sweep_edge_inset:.2f} mm, "
         f"front_side = {params.wall_print_sweep_render_front_side}, "
         f"back_side = {params.wall_print_sweep_render_back_side}"
@@ -887,6 +1037,9 @@ def print_checks(params: RibShelfParams, derived: Derived) -> None:
     lane_widths = [right - left for (left, right) in derived.lane_bounds]
     lane_widths_text = ", ".join(f"{width:.2f}" for width in lane_widths)
     print(f"INFO: lane_clear_widths_mm = [{lane_widths_text}]")
+    scallop_radii = [min(max(0.0, params.slot_floor_scallop_max_radius), width * 0.5) for width in lane_widths]
+    scallop_radii_text = ", ".join(f"{radius:.2f}" for radius in scallop_radii)
+    print(f"INFO: slot_floor_scallop_radii_mm = [{scallop_radii_text}]")
     if len(derived.lane_centers) > 1:
         center_pitches = [
             derived.lane_centers[i + 1] - derived.lane_centers[i]
