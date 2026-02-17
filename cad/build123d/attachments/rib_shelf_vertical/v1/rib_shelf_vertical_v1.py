@@ -163,6 +163,8 @@ class RibShelfParams:
     show_wall_print_sweeps: bool = True
     wall_print_sweep_circle_cut: bool = True
     wall_print_scallop_cut_x_bleed: float = 0.2
+    wall_print_scallop_cut_y_overshoot: float = 0.8
+    wall_print_scallop_cut_z_overshoot: float = 0.3
     wall_print_sweep_render_front_side: bool = True
     wall_print_sweep_render_back_side: bool = False
     wall_print_sweep_edge_inset: float = 0.35
@@ -421,17 +423,23 @@ def _build_wall_side_buttress_scallop_cutter(
     z_top: float,
     x_bleed_left: float = 0.0,
     x_bleed_right: float = 0.0,
+    y_overshoot: float = 0.0,
+    z_overshoot: float = 0.0,
 ):
     bleed_left = max(0.0, x_bleed_left)
     bleed_right = max(0.0, x_bleed_right)
     x0_cut = x0 - bleed_left
     x1_cut = x1 + bleed_right
+    dy = y_tray_side - y_wall_edge
+    y_dir = 1.0 if dy >= 0 else -1.0
+    y_tray_cut = y_tray_side + y_dir * max(0.0, y_overshoot)
+    z_floor_cut = z_floor - max(0.0, z_overshoot)
     straight = _build_single_wall_side_buttress(
         x0=x0_cut,
         x1=x1_cut,
         y_wall_edge=y_wall_edge,
-        y_tray_side=y_tray_side,
-        z_floor=z_floor,
+        y_tray_side=y_tray_cut,
+        z_floor=z_floor_cut,
         z_top=z_top,
         use_arc=False,
     )
@@ -442,8 +450,8 @@ def _build_wall_side_buttress_scallop_cutter(
         x0=x0_cut,
         x1=x1_cut,
         y_wall_edge=y_wall_edge,
-        y_tray_side=y_tray_side,
-        z_floor=z_floor,
+        y_tray_side=y_tray_cut,
+        z_floor=z_floor_cut,
         z_top=z_top,
         use_arc=True,
         arc_fallback_to_straight=False,
@@ -470,8 +478,10 @@ def _build_slot_floor_scallop_strip(
     if radius <= 0.15:
         return None
 
-    x_mid = (left_x1 + right_x0) * 0.5
-    y_side = _tray_side_y_at_x(derived, x_mid, side, params.wall_print_sweep_edge_inset)
+    # Use the outboard-most radial point of this slot fillet pair as the side-stop reference.
+    # This intentionally lets inboard parts overrun and be cleanly clipped by the final tray mask.
+    x_outboard = right_x0
+    y_side = _tray_side_y_at_x(derived, x_outboard, side, params.wall_print_sweep_edge_inset)
     left_y0, left_y1 = left_wall[2], left_wall[3]
     right_y0, right_y1 = right_wall[2], right_wall[3]
 
@@ -810,13 +820,12 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
         for x0, x1, y0, y1, wall_h, kind in walls_sorted:
             if wall_h <= 0.6:
                 continue
-            y_front_x0 = _tray_side_y_at_x(derived, x0, "front", params.wall_print_sweep_edge_inset)
-            y_front_x1 = _tray_side_y_at_x(derived, x1, "front", params.wall_print_sweep_edge_inset)
-            y_back_x0 = _tray_side_y_at_x(derived, x0, "back", params.wall_print_sweep_edge_inset)
-            y_back_x1 = _tray_side_y_at_x(derived, x1, "back", params.wall_print_sweep_edge_inset)
-            y_front_target = y_front_x0 if abs(y_front_x0) <= abs(y_front_x1) else y_front_x1
-            y_back_target = y_back_x0 if abs(y_back_x0) <= abs(y_back_x1) else y_back_x1
             x_bleed_left, x_bleed_right = wall_cut_bleeds.get((x0, x1, y0, y1), (cut_margin, cut_margin))
+            # Side-stop target is based on outboard-most radial extent of the geometry.
+            # With circle-cut enabled, use cutter outboard extent; otherwise use wall outboard face.
+            x_outboard = x1 + (x_bleed_right if params.wall_print_sweep_circle_cut else 0.0)
+            y_front_target = _tray_side_y_at_x(derived, x_outboard, "front", params.wall_print_sweep_edge_inset)
+            y_back_target = _tray_side_y_at_x(derived, x_outboard, "back", params.wall_print_sweep_edge_inset)
 
             if params.wall_print_sweep_render_front_side:
                 buttress_front = _build_single_wall_side_buttress(
@@ -840,6 +849,8 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
                         z_top=z_floor + wall_h,
                         x_bleed_left=x_bleed_left,
                         x_bleed_right=x_bleed_right,
+                        y_overshoot=params.wall_print_scallop_cut_y_overshoot,
+                        z_overshoot=params.wall_print_scallop_cut_z_overshoot,
                     )
                     if cutter_front is not None:
                         buttress_scallop_cutters.append(cutter_front)
@@ -866,6 +877,8 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
                         z_top=z_floor + wall_h,
                         x_bleed_left=x_bleed_left,
                         x_bleed_right=x_bleed_right,
+                        y_overshoot=params.wall_print_scallop_cut_y_overshoot,
+                        z_overshoot=params.wall_print_scallop_cut_z_overshoot,
                     )
                     if cutter_back is not None:
                         buttress_scallop_cutters.append(cutter_back)
@@ -1029,7 +1042,10 @@ def print_checks(params: RibShelfParams, derived: Derived) -> None:
         f"INFO: wall_print_sweeps = {params.show_wall_print_sweeps}, "
         f"one_per_wall = True, thickness = wall_thickness ({params.wall_thickness:.2f} mm), "
         f"circle_cut = {params.wall_print_sweep_circle_cut}, "
+        f"edge_target = outboard_radial_point, "
         f"scallop_cut_x_bleed = auto_from_adjacent_slot_radii + {params.wall_print_scallop_cut_x_bleed:.2f} mm margin, "
+        f"scallop_cut_y_overshoot = {params.wall_print_scallop_cut_y_overshoot:.2f} mm, "
+        f"scallop_cut_z_overshoot = {params.wall_print_scallop_cut_z_overshoot:.2f} mm, "
         f"edge_inset = {params.wall_print_sweep_edge_inset:.2f} mm, "
         f"front_side = {params.wall_print_sweep_render_front_side}, "
         f"back_side = {params.wall_print_sweep_render_back_side}"
