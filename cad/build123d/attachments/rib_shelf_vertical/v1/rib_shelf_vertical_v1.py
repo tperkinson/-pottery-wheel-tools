@@ -160,6 +160,9 @@ class RibShelfParams:
     slot_floor_scallop_max_radius: float = 3.0
     slot_floor_scallop_width_extra: float = 1.0
     slot_floor_scallop_edge_overrun: float = 1.2
+    slot_floor_scallop_merge_overlap: float = 0.06
+    slot_floor_scallop_render_front_side: bool = True
+    slot_floor_scallop_render_back_side: bool = True
     slot_edge_cleanup_band_width: float = 0.0
     slot_edge_cleanup_band_height: float = 0.0
     slot_edge_cleanup_band_z_drop: float = 0.35
@@ -576,52 +579,51 @@ def _build_slot_floor_scallop_strip(
     left_y0, left_y1 = left_wall[2], left_wall[3]
     right_y0, right_y1 = right_wall[2], right_wall[3]
 
-    if side == "front":
-        y_start = min(left_y1, right_y1)
-    else:
-        y_start = max(left_y0, right_y0)
-
-    # Extend slightly past tray edge so final tray mask clips to a clean flush edge.
-    y_dir = 1.0 if (y_side - y_start) >= 0 else -1.0
-    y_side_ext = y_side + y_dir * max(0.0, params.slot_floor_scallop_edge_overrun)
-    y0 = min(y_start, y_side_ext)
-    y1 = max(y_start, y_side_ext)
-    y_span = y1 - y0
-    if y_span <= 0.2:
-        return None
-
-    y_mid = (y0 + y1) * 0.5
-    cutter_len = y_span + 0.3
     z_base = params.floor_thickness
     z_center = z_base + radius
+    overrun = max(0.0, params.slot_floor_scallop_edge_overrun)
+    merge_overlap = max(0.0, params.slot_floor_scallop_merge_overlap)
 
-    # Two slot-local strips (one from each wall), each width == radius.
-    # They naturally merge when slot_clear <= 2*radius (e.g. <= 6 mm at max radius 3 mm).
-    left_strip = _box_min(
-        radius,
-        y_span,
-        radius,
-        left_x1,
-        y0,
-        z_base,
-    )
-    left_cutter = Cylinder(radius, cutter_len, align=(Align.CENTER, Align.CENTER, Align.CENTER))
-    left_cutter = left_cutter.rotate(Axis.X, 90.0).translate((left_x1 + radius, y_mid, z_center))
-    left_strip = _coerce_single_shape(left_strip - left_cutter, f"slot_floor_scallop_left_{side}")
+    def _make_wall_strip(x_edge: float, wall_y0: float, wall_y1: float, edge_side: str):
+        # Important: each wall strip starts from that wall's own endpoint.
+        # This avoids short strips caused by coupling start Y to the opposite wall.
+        y_start = wall_y0 if side == "front" else wall_y1
+        y_dir = 1.0 if (y_side - y_start) >= 0 else -1.0
+        y_side_ext = y_side + y_dir * overrun
+        y0 = min(y_start, y_side_ext)
+        y1 = max(y_start, y_side_ext)
+        y_span = y1 - y0
+        if y_span <= 0.2:
+            return None
 
-    right_strip = _box_min(
-        radius,
-        y_span,
-        radius,
-        right_x0 - radius,
-        y0,
-        z_base,
-    )
-    right_cutter = Cylinder(radius, cutter_len, align=(Align.CENTER, Align.CENTER, Align.CENTER))
-    right_cutter = right_cutter.rotate(Axis.X, 90.0).translate((right_x0 - radius, y_mid, z_center))
-    right_strip = _coerce_single_shape(right_strip - right_cutter, f"slot_floor_scallop_right_{side}")
+        y_mid = (y0 + y1) * 0.5
+        cutter_len = y_span + 0.3
+        strip_height = radius + merge_overlap
+        strip_z0 = z_base - merge_overlap
+        if edge_side == "left":
+            strip = _box_min(radius + merge_overlap, y_span, strip_height, x_edge - merge_overlap, y0, strip_z0)
+            cutter_center_x = x_edge + radius
+        else:
+            strip = _box_min(radius + merge_overlap, y_span, strip_height, x_edge - radius, y0, strip_z0)
+            cutter_center_x = x_edge - radius
+        cutter = Cylinder(radius, cutter_len, align=(Align.CENTER, Align.CENTER, Align.CENTER))
+        cutter = cutter.rotate(Axis.X, 90.0).translate((cutter_center_x, y_mid, z_center))
+        return _coerce_single_shape(strip - cutter, f"slot_floor_scallop_{edge_side}_{side}")
 
-    return _coerce_single_shape(left_strip + right_strip, f"slot_floor_scallop_strip_{side}")
+    strips = []
+    left_strip = _make_wall_strip(left_x1, left_y0, left_y1, "left")
+    if left_strip is not None:
+        strips.append(left_strip)
+    right_strip = _make_wall_strip(right_x0, right_y0, right_y1, "right")
+    if right_strip is not None:
+        strips.append(right_strip)
+
+    if not strips:
+        return None
+    combined = strips[0]
+    for idx, strip in enumerate(strips[1:], start=1):
+        combined = _coerce_single_shape(combined + strip, f"slot_floor_scallop_combined_{side}_{idx}")
+    return _coerce_single_shape(combined, f"slot_floor_scallop_strip_{side}")
 
 
 def _tray_side_y_at_x(derived: Derived, x_local: float, side: str, edge_inset: float = 0.0) -> float:
@@ -1058,9 +1060,9 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
     # Slot-driven wall/floor scallops:
     # radius = min(slot_floor_scallop_max_radius, 0.5 * slot_clearance)
     support_sides = []
-    if params.wall_print_sweep_render_front_side:
+    if params.slot_floor_scallop_render_front_side:
         support_sides.append("front")
-    if params.wall_print_sweep_render_back_side:
+    if params.slot_floor_scallop_render_back_side:
         support_sides.append("back")
     if params.slot_floor_scallop_max_radius > 0 and support_sides:
         for side in support_sides:
@@ -1271,8 +1273,14 @@ def print_checks(params: RibShelfParams, derived: Derived) -> None:
         f"slot_scallop_max_radius = {params.slot_floor_scallop_max_radius:.2f} mm, "
         f"slot_scallop_width_extra = {params.slot_floor_scallop_width_extra:.2f} mm (unused in current mode), "
         f"slot_scallop_edge_overrun = {params.slot_floor_scallop_edge_overrun:.2f} mm, "
+        f"slot_scallop_merge_overlap = {params.slot_floor_scallop_merge_overlap:.2f} mm, "
         f"edge_cleanup_band = w{params.slot_edge_cleanup_band_width:.2f}/h{params.slot_edge_cleanup_band_height:.2f}/drop{params.slot_edge_cleanup_band_z_drop:.2f} mm, "
         f"outside_ratio = {params.slot_edge_cleanup_band_outside_ratio:.2f}"
+    )
+    print(
+        f"INFO: slot_floor_scallop_sides = "
+        f"front={params.slot_floor_scallop_render_front_side}, "
+        f"back={params.slot_floor_scallop_render_back_side}"
     )
     print(
         f"INFO: mount_underside_blend_mode = constructive_swept, radius = {max(0.0, min(params.mount_underside_fillet_radius, max(0.2, params.mount_overlap - 0.35))):.2f} mm"
