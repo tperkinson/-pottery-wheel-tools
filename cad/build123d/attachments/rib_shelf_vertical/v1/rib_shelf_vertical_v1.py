@@ -161,6 +161,7 @@ class RibShelfParams:
     slot_floor_scallop_width_extra: float = 1.0
     slot_floor_scallop_edge_overrun: float = 1.2
     slot_floor_scallop_merge_overlap: float = 0.06
+    slot_floor_scallop_full_wall_span: bool = True
     slot_floor_scallop_render_front_side: bool = True
     slot_floor_scallop_render_back_side: bool = False
     wall_back_root_fillet_radius: float = 1.1
@@ -588,7 +589,11 @@ def _build_slot_floor_scallop_strip(
     def _make_wall_strip(x_edge: float, wall_y0: float, wall_y1: float, edge_side: str):
         # Important: each wall strip starts from that wall's own endpoint.
         # This avoids short strips caused by coupling start Y to the opposite wall.
-        y_start = wall_y0 if side == "front" else wall_y1
+        if params.slot_floor_scallop_full_wall_span:
+            # Run root scallop down the full wall length before extending to tray side.
+            y_start = wall_y1 if side == "front" else wall_y0
+        else:
+            y_start = wall_y0 if side == "front" else wall_y1
         y_dir = 1.0 if (y_side - y_start) >= 0 else -1.0
         y_side_ext = y_side + y_dir * overrun
         y0 = min(y_start, y_side_ext)
@@ -1301,6 +1306,7 @@ def print_checks(params: RibShelfParams, derived: Derived) -> None:
         f"front={params.slot_floor_scallop_render_front_side}, "
         f"back={params.slot_floor_scallop_render_back_side}"
     )
+    print(f"INFO: slot_floor_scallop_full_wall_span = {params.slot_floor_scallop_full_wall_span}")
     print(f"INFO: wall_back_root_fillet_radius = {params.wall_back_root_fillet_radius:.2f} mm")
     print(
         f"INFO: mount_underside_blend_mode = constructive_swept, radius = {max(0.0, min(params.mount_underside_fillet_radius, max(0.2, params.mount_overlap - 0.35))):.2f} mm"
