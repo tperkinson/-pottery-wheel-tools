@@ -162,7 +162,8 @@ class RibShelfParams:
     slot_floor_scallop_edge_overrun: float = 1.2
     slot_floor_scallop_merge_overlap: float = 0.06
     slot_floor_scallop_render_front_side: bool = True
-    slot_floor_scallop_render_back_side: bool = True
+    slot_floor_scallop_render_back_side: bool = False
+    wall_back_root_fillet_radius: float = 1.1
     slot_edge_cleanup_band_width: float = 0.0
     slot_edge_cleanup_band_height: float = 0.0
     slot_edge_cleanup_band_z_drop: float = 0.35
@@ -970,6 +971,24 @@ def build_shelf_linear(params: RibShelfParams, derived: Derived):
 
     walls_sorted = sorted(wall_specs, key=lambda w: w[0])
 
+    # Cleanability pass: soften the tray-to-wall root on the back side using direct edge fillets.
+    back_root_r = max(0.0, params.wall_back_root_fillet_radius)
+    if back_root_r > 0:
+        z_floor = params.floor_thickness
+        x_span_min = params.wall_thickness * 0.55
+        x_span_max = params.wall_thickness * 1.75
+        back_root_edges = []
+        for edge in shelf.edges():
+            bb = edge.bounding_box()
+            if abs(bb.min.Z - z_floor) > 0.08 or abs(bb.max.Z - z_floor) > 0.08:
+                continue
+            x_span = bb.max.X - bb.min.X
+            y_span = bb.max.Y - bb.min.Y
+            y_mid = (bb.min.Y + bb.max.Y) * 0.5
+            if x_span_min <= x_span <= x_span_max and y_span <= 0.12 and y_mid > 0:
+                back_root_edges.append(edge)
+        shelf = _safe_fillet(shelf, back_root_edges, back_root_r, "wall_back_root_edges")
+
     def _slot_radius_from_clear(slot_clear: float) -> float:
         return min(max(0.0, params.slot_floor_scallop_max_radius), max(0.0, slot_clear) * 0.5)
 
@@ -1282,6 +1301,7 @@ def print_checks(params: RibShelfParams, derived: Derived) -> None:
         f"front={params.slot_floor_scallop_render_front_side}, "
         f"back={params.slot_floor_scallop_render_back_side}"
     )
+    print(f"INFO: wall_back_root_fillet_radius = {params.wall_back_root_fillet_radius:.2f} mm")
     print(
         f"INFO: mount_underside_blend_mode = constructive_swept, radius = {max(0.0, min(params.mount_underside_fillet_radius, max(0.2, params.mount_overlap - 0.35))):.2f} mm"
     )
